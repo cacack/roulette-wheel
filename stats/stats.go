@@ -27,11 +27,17 @@ type Stats struct {
 	LowCount   int  // 1-18
 	HighCount  int  // 19-36
 
-	// Display
+	// Right panel display (stats)
 	PanelX      float64
 	PanelY      float64
 	PanelWidth  float64
 	PanelHeight float64
+
+	// Left panel display (history)
+	HistoryPanelX      float64
+	HistoryPanelY      float64
+	HistoryPanelWidth  float64
+	HistoryPanelHeight float64
 }
 
 // Number color mapping
@@ -56,15 +62,19 @@ var (
 )
 
 // New creates a new stats tracker
-func New(panelX, panelY, panelWidth, panelHeight float64) *Stats {
+func New(panelX, panelY, panelWidth, panelHeight, histPanelX, histPanelY, histPanelWidth, histPanelHeight float64) *Stats {
 	return &Stats{
-		History:     make([]string, 0, 20),
-		Counts:      make(map[string]int),
-		MaxHistory:  15,
-		PanelX:      panelX,
-		PanelY:      panelY,
-		PanelWidth:  panelWidth,
-		PanelHeight: panelHeight,
+		History:            make([]string, 0, 20),
+		Counts:             make(map[string]int),
+		MaxHistory:         15,
+		PanelX:             panelX,
+		PanelY:             panelY,
+		PanelWidth:         panelWidth,
+		PanelHeight:        panelHeight,
+		HistoryPanelX:      histPanelX,
+		HistoryPanelY:      histPanelY,
+		HistoryPanelWidth:  histPanelWidth,
+		HistoryPanelHeight: histPanelHeight,
 	}
 }
 
@@ -191,16 +201,104 @@ func (s *Stats) getTopNumbers(n int, hot bool) []string {
 	return result
 }
 
-// UpdatePosition updates the panel position (for window resize)
-func (s *Stats) UpdatePosition(panelX, panelY, panelWidth, panelHeight float64) {
+// UpdatePosition updates both panel positions (for window resize)
+func (s *Stats) UpdatePosition(panelX, panelY, panelWidth, panelHeight, histPanelX, histPanelY, histPanelWidth, histPanelHeight float64) {
 	s.PanelX = panelX
 	s.PanelY = panelY
 	s.PanelWidth = panelWidth
 	s.PanelHeight = panelHeight
+	s.HistoryPanelX = histPanelX
+	s.HistoryPanelY = histPanelY
+	s.HistoryPanelWidth = histPanelWidth
+	s.HistoryPanelHeight = histPanelHeight
 }
 
-// Draw renders the statistics panel
+// Draw renders both panels (history on left, stats on right)
 func (s *Stats) Draw(screen *ebiten.Image, fontFace *text.GoTextFace) {
+	// Draw left history panel
+	s.DrawHistoryPanel(screen, fontFace)
+
+	// Draw right stats panel
+	s.DrawStatsPanel(screen, fontFace)
+}
+
+// DrawHistoryPanel renders the vertical history panel on the left side
+func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontFace *text.GoTextFace) {
+	// Draw panel background
+	vector.DrawFilledRect(screen, float32(s.HistoryPanelX), float32(s.HistoryPanelY),
+		float32(s.HistoryPanelWidth), float32(s.HistoryPanelHeight), ColorPanel, false)
+
+	// Draw border
+	vector.StrokeRect(screen, float32(s.HistoryPanelX), float32(s.HistoryPanelY),
+		float32(s.HistoryPanelWidth), float32(s.HistoryPanelHeight), 2, ColorGold, false)
+
+	padding := 10.0
+	y := s.HistoryPanelY + 25
+	centerX := s.HistoryPanelX + s.HistoryPanelWidth/2
+
+	// "LAST" section with large chip for most recent result
+	s.drawText(screen, fontFace, "LAST", s.HistoryPanelX+padding+18, y, ColorGold, 1.2)
+	y += 30
+
+	if len(s.History) > 0 {
+		lastNum := s.History[len(s.History)-1]
+		lastColor := getNumberColor(lastNum)
+		lastChipSize := 38.0
+
+		// Draw large chip for last number
+		vector.DrawFilledCircle(screen, float32(centerX), float32(y+lastChipSize), float32(lastChipSize), lastColor, false)
+		vector.StrokeCircle(screen, float32(centerX), float32(y+lastChipSize), float32(lastChipSize), 2, ColorGold, false)
+
+		// Draw number text centered in circle
+		textScale := 1.8
+		textOffsetX := -10.0 * float64(len(lastNum))
+		textOffsetY := -14.0
+		s.drawText(screen, fontFace, lastNum, centerX+textOffsetX, y+lastChipSize+textOffsetY, ColorText, textScale)
+
+		y += lastChipSize*2 + 15
+	} else {
+		y += 30
+	}
+
+	// Separator line
+	vector.StrokeLine(screen, float32(s.HistoryPanelX+10), float32(y),
+		float32(s.HistoryPanelX+s.HistoryPanelWidth-10), float32(y), 1, ColorGold, false)
+	y += 15
+
+	// "HISTORY" title
+	s.drawText(screen, fontFace, "HISTORY", s.HistoryPanelX+padding+5, y, ColorGold, 1.0)
+	y += 30
+
+	// Draw history vertically (newest at top, skip first since it's shown in LAST)
+	chipSize := 20.0
+	spacing := chipSize*2 + 6
+
+	startIdx := len(s.History) - 2 // Skip the most recent (shown in LAST)
+	for i := startIdx; i >= 0; i-- {
+		// Stop if we would overflow the panel
+		if y+chipSize*2 > s.HistoryPanelY+s.HistoryPanelHeight-20 {
+			break
+		}
+
+		num := s.History[i]
+		chipColor := getNumberColor(num)
+
+		// Draw chip centered in panel
+		vector.DrawFilledCircle(screen, float32(centerX), float32(y+chipSize), float32(chipSize), chipColor, false)
+		vector.StrokeCircle(screen, float32(centerX), float32(y+chipSize), float32(chipSize), 1.5, ColorGold, false)
+
+		// Draw number text centered in circle
+		textScale := 0.85
+		textOffsetX := -5.0 * float64(len(num))
+		textOffsetY := -6.0
+		s.drawText(screen, fontFace, num, centerX+textOffsetX, y+chipSize+textOffsetY, ColorText, textScale)
+
+		y += spacing
+	}
+}
+
+// DrawStatsPanel renders the statistics panel on the right side
+func (s *Stats) DrawStatsPanel(screen *ebiten.Image, fontFace *text.GoTextFace) {
 	// Draw panel background
 	vector.DrawFilledRect(screen, float32(s.PanelX), float32(s.PanelY),
 		float32(s.PanelWidth), float32(s.PanelHeight), ColorPanel, false)
@@ -219,21 +317,6 @@ func (s *Stats) Draw(screen *ebiten.Image, fontFace *text.GoTextFace) {
 
 	// Total spins
 	s.drawText(screen, fontFace, fmt.Sprintf("Total Spins: %d", s.TotalSpins), s.PanelX+padding, y, ColorText, 1.0)
-	y += lineHeight * 1.2
-
-	// Last Number (large display)
-	s.drawText(screen, fontFace, "Last Number:", s.PanelX+padding, y, ColorText, 1.0)
-	y += lineHeight * 1.2
-	if len(s.History) > 0 {
-		lastNum := s.History[len(s.History)-1]
-		s.drawLastNumber(screen, fontFace, lastNum, s.PanelX+padding, y)
-	}
-	y += lineHeight * 2.8
-
-	// History
-	s.drawText(screen, fontFace, "History:", s.PanelX+padding, y, ColorText, 1.0)
-	y += lineHeight * 0.8
-	s.drawHistory(screen, fontFace, y)
 	y += lineHeight * 1.5
 
 	// Hot Numbers
@@ -282,56 +365,6 @@ func (s *Stats) drawText(screen *ebiten.Image, fontFace *text.GoTextFace, str st
 	op.GeoM.Translate(x, y)
 	op.ColorScale.ScaleWithColor(clr)
 	text.Draw(screen, str, fontFace, op)
-}
-
-func (s *Stats) drawLastNumber(screen *ebiten.Image, fontFace *text.GoTextFace, number string, x, y float64) {
-	// Draw large colored chip for last number
-	chipSize := 40.0
-	centerX := x + chipSize
-	centerY := y + chipSize/2
-
-	// Chip background
-	chipColor := getNumberColor(number)
-	vector.DrawFilledCircle(screen, float32(centerX), float32(centerY), float32(chipSize), chipColor, false)
-	vector.StrokeCircle(screen, float32(centerX), float32(centerY), float32(chipSize), 3, ColorGold, false)
-
-	// Number text centered in circle
-	textScale := 2.0
-	// Better centering: offset from center based on text length
-	textOffsetX := -11.0 * float64(len(number))
-	textOffsetY := -14.0
-	s.drawText(screen, fontFace, number, centerX+textOffsetX, centerY+textOffsetY, ColorText, textScale)
-}
-
-func (s *Stats) drawHistory(screen *ebiten.Image, fontFace *text.GoTextFace, y float64) {
-	chipSize := 18.0
-	spacing := chipSize*2 + 5
-	x := s.PanelX + 20
-
-	// Draw history from newest to oldest
-	for i := len(s.History) - 1; i >= 0; i-- {
-		num := s.History[i]
-		chipColor := getNumberColor(num)
-
-		centerX := x + chipSize
-		centerY := y + chipSize
-
-		// Draw chip
-		vector.DrawFilledCircle(screen, float32(centerX), float32(centerY), float32(chipSize), chipColor, false)
-		vector.StrokeCircle(screen, float32(centerX), float32(centerY), float32(chipSize), 1, ColorGold, false)
-
-		// Draw number text centered in circle
-		textScale := 0.8
-		// Better centering: offset from center based on text length
-		textOffsetX := -5.0 * float64(len(num))
-		textOffsetY := -6.0
-		s.drawText(screen, fontFace, num, centerX+textOffsetX, centerY+textOffsetY, ColorText, textScale)
-
-		x += spacing
-		if x > s.PanelX+s.PanelWidth-40 {
-			break // Don't overflow panel
-		}
-	}
 }
 
 func (s *Stats) drawNumberList(screen *ebiten.Image, fontFace *text.GoTextFace, numbers []string, x, y float64) {

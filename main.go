@@ -10,6 +10,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 	"golang.org/x/image/font/gofont/gobold"
 
 	"roulette-wheel/audio"
@@ -24,9 +25,23 @@ const (
 	DefaultWindowHeight = 720
 	TargetFPS           = 60
 	StatsPanelWidth     = 300
+	HistoryPanelWidth   = 110  // Left side history panel
 	WheelSpinSpeed      = 0.085    // Fast initial spin for casino feel
 	WheelFriction       = 0.00014  // Normal friction while ball is spinning (proportional to speed increase)
 	WheelBrakeFriction  = 0.00034  // Higher friction after ball settles (~2 sec to stop)
+)
+
+// Animation constants
+const (
+	AnimationHoldFrames   = 120 // ~2 seconds at 60fps
+	AnimationShrinkFrames = 60  // ~1 second at 60fps
+)
+
+// Animation phases
+const (
+	AnimPhaseNone = iota
+	AnimPhaseHold
+	AnimPhaseShrink
 )
 
 // Game represents the main game state
@@ -50,6 +65,12 @@ type Game struct {
 	lastTickSlot      int
 	ballSettled       bool // True when ball has settled but wheel is still spinning
 	resultDeclared    bool // True when the final result has been declared
+
+	// Winning animation state
+	animPhase        int     // Current animation phase (AnimPhaseNone, AnimPhaseHold, AnimPhaseShrink)
+	animFrameCount   int     // Frame counter for current phase
+	animWinningNum   string  // The winning number to display
+	animWinningColor color.RGBA // Color of the winning number
 }
 
 // NewGame creates a new game instance
@@ -72,9 +93,12 @@ func NewGame() *Game {
 	g.ball = ball.New(wheelCenterX, wheelCenterY, wheelRadius)
 	g.audio = audio.New()
 
-	// Initialize stats panel
+	// Initialize stats panels (right stats panel, left history panel)
 	statsPanelX := float64(g.screenWidth) - StatsPanelWidth
-	g.stats = stats.New(statsPanelX, 0, StatsPanelWidth, float64(g.screenHeight))
+	g.stats = stats.New(
+		statsPanelX, 0, StatsPanelWidth, float64(g.screenHeight),
+		0, 0, HistoryPanelWidth, float64(g.screenHeight),
+	)
 
 	// Set up ball callbacks for audio
 	g.ball.OnTick = func() {
@@ -109,8 +133,8 @@ func (g *Game) initFont() {
 
 // calculateWheelRadius returns the optimal wheel radius for current screen
 func (g *Game) calculateWheelRadius() float64 {
-	// Available width for wheel (excluding stats panel)
-	availableWidth := float64(g.screenWidth) - StatsPanelWidth
+	// Available width for wheel (excluding both panels)
+	availableWidth := float64(g.screenWidth) - StatsPanelWidth - HistoryPanelWidth
 	availableHeight := float64(g.screenHeight)
 
 	// Use the smaller dimension with padding
@@ -122,8 +146,9 @@ func (g *Game) calculateWheelRadius() float64 {
 
 // calculateWheelCenter returns the center position for the wheel
 func (g *Game) calculateWheelCenter(radius float64) (float64, float64) {
-	availableWidth := float64(g.screenWidth) - StatsPanelWidth
-	centerX := availableWidth / 2
+	// Center wheel between the two panels
+	availableWidth := float64(g.screenWidth) - StatsPanelWidth - HistoryPanelWidth
+	centerX := HistoryPanelWidth + availableWidth/2
 	centerY := float64(g.screenHeight) / 2
 	return centerX, centerY
 }
@@ -142,7 +167,33 @@ func (g *Game) Update() error {
 	// Sync rolling audio with ball state
 	g.syncRollingAudio()
 
+	// Update winning animation
+	g.updateWinningAnimation()
+
 	return nil
+}
+
+// updateWinningAnimation handles the winning number reveal animation state machine
+func (g *Game) updateWinningAnimation() {
+	switch g.animPhase {
+	case AnimPhaseHold:
+		g.animFrameCount++
+		if g.animFrameCount >= AnimationHoldFrames {
+			// Transition to shrink phase
+			g.animPhase = AnimPhaseShrink
+			g.animFrameCount = 0
+		}
+
+	case AnimPhaseShrink:
+		g.animFrameCount++
+		if g.animFrameCount >= AnimationShrinkFrames {
+			// Animation complete - record the result to stats
+			g.stats.RecordResult(g.animWinningNum)
+			g.animPhase = AnimPhaseNone
+			g.animFrameCount = 0
+			g.animWinningNum = ""
+		}
+	}
 }
 
 // syncRollingAudio synchronizes the rolling sound with ball physics
@@ -167,8 +218,8 @@ func (g *Game) syncRollingAudio() {
 
 // handleInput processes user input
 func (g *Game) handleInput() {
-	// Spin: Click, Space, or Enter
-	if !g.isSpinning {
+	// Spin: Click, Space, or Enter (only when not spinning and animation is done)
+	if !g.isSpinning && g.animPhase == AnimPhaseNone {
 		shouldSpin := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) ||
 			inpututil.IsKeyJustPressed(ebiten.KeySpace) ||
 			inpututil.IsKeyJustPressed(ebiten.KeyEnter)
@@ -215,6 +266,11 @@ func (g *Game) startSpin() {
 	g.ballSettled = false
 	g.resultDeclared = false
 
+	// Reset animation state
+	g.animPhase = AnimPhaseNone
+	g.animFrameCount = 0
+	g.animWinningNum = ""
+
 	// Start wheel spinning
 	g.wheelInitialSpeed = WheelSpinSpeed * (0.8 + float64(randomByte())/255.0*0.4)
 	g.wheel.StartSpin(g.wheelInitialSpeed)
@@ -237,6 +293,11 @@ func (g *Game) resetGame() {
 	g.spinStarted = false
 	g.ballSettled = false
 	g.resultDeclared = false
+
+	// Reset animation state
+	g.animPhase = AnimPhaseNone
+	g.animFrameCount = 0
+	g.animWinningNum = ""
 
 	// Reset stats
 	g.stats.Reset()
@@ -282,9 +343,32 @@ func (g *Game) declareResult() {
 	// Get the winning number from the ball's settled position
 	winningNumber := g.ball.GetWinningNumber(wheel.NumberSequence)
 	if winningNumber != "" {
-		g.stats.RecordResult(winningNumber)
+		// Start the winning animation
+		g.animWinningNum = winningNumber
+		g.animWinningColor = getNumberColor(winningNumber)
+		g.animPhase = AnimPhaseHold
+		g.animFrameCount = 0
 		g.audio.PlayChime()
+		// Note: stats.RecordResult will be called when animation completes
 	}
+}
+
+// getNumberColor returns the color for a roulette number
+func getNumberColor(num string) color.RGBA {
+	if num == "0" || num == "00" {
+		return color.RGBA{0, 128, 0, 255} // Green
+	}
+	// Red numbers on American roulette wheel
+	redNumbers := map[string]bool{
+		"1": true, "3": true, "5": true, "7": true, "9": true,
+		"12": true, "14": true, "16": true, "18": true, "19": true,
+		"21": true, "23": true, "25": true, "27": true, "30": true,
+		"32": true, "34": true, "36": true,
+	}
+	if redNumbers[num] {
+		return color.RGBA{185, 30, 30, 255} // Red
+	}
+	return color.RGBA{25, 25, 25, 255} // Black
 }
 
 // toggleFullscreen toggles between windowed and fullscreen modes
@@ -314,6 +398,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.audio.IsMuted() {
 		g.drawMuteIndicator(screen)
 	}
+
+	// Draw winning animation (on top of everything)
+	g.drawWinningAnimation(screen)
 }
 
 // drawControls draws the control hints at the bottom of the screen
@@ -342,6 +429,81 @@ func (g *Game) drawMuteIndicator(screen *ebiten.Image) {
 	text.Draw(screen, "MUTED", g.fontFace, op)
 }
 
+// drawWinningAnimation renders the winning number reveal animation
+func (g *Game) drawWinningAnimation(screen *ebiten.Image) {
+	if g.animPhase == AnimPhaseNone || g.animWinningNum == "" {
+		return
+	}
+
+	// Calculate animation parameters
+	screenW := float64(g.screenWidth)
+	screenH := float64(g.screenHeight)
+
+	// Full size circle (80% of screen height)
+	fullRadius := screenH * 0.4
+
+	// Target position: LAST section in left panel
+	// The history panel starts at X=0, and chips are centered at X = HistoryPanelWidth/2
+	// LAST chip position: 25 (padding) + 30 (title) + 38 (chip radius) = 93
+	targetX := float64(HistoryPanelWidth) / 2
+	targetY := 93.0        // Matches LAST chip center position
+	targetRadius := 38.0   // Same size as LAST section chip
+
+	// Center of screen for full reveal
+	centerX := screenW / 2
+	centerY := screenH / 2
+
+	var currentX, currentY, currentRadius float64
+
+	switch g.animPhase {
+	case AnimPhaseHold:
+		// Static at center with full size
+		currentX = centerX
+		currentY = centerY
+		currentRadius = fullRadius
+
+	case AnimPhaseShrink:
+		// Animate from center to target
+		progress := float64(g.animFrameCount) / float64(AnimationShrinkFrames)
+		// Ease-out cubic for smooth deceleration
+		eased := 1 - math.Pow(1-progress, 3)
+
+		currentX = centerX + (targetX-centerX)*eased
+		currentY = centerY + (targetY-centerY)*eased
+		currentRadius = fullRadius + (targetRadius-fullRadius)*eased
+	}
+
+	// Draw the circle with winning color
+	vector.DrawFilledCircle(screen, float32(currentX), float32(currentY), float32(currentRadius), g.animWinningColor, false)
+
+	// Draw gold border
+	borderWidth := float32(currentRadius * 0.05)
+	if borderWidth < 2 {
+		borderWidth = 2
+	}
+	vector.StrokeCircle(screen, float32(currentX), float32(currentY), float32(currentRadius), borderWidth, colorGold, false)
+
+	// Draw the winning number text
+	if g.fontFace != nil {
+		// Scale text based on circle size
+		textScale := currentRadius / 50.0 // Base scale factor
+		if textScale < 0.7 {
+			textScale = 0.7
+		}
+
+		// Calculate text position (centered in circle)
+		textLen := float64(len(g.animWinningNum))
+		textOffsetX := -textLen * 6 * textScale
+		textOffsetY := -8 * textScale
+
+		op := &text.DrawOptions{}
+		op.GeoM.Scale(textScale, textScale)
+		op.GeoM.Translate(currentX+textOffsetX, currentY+textOffsetY)
+		op.ColorScale.ScaleWithColor(color.White)
+		text.Draw(screen, g.animWinningNum, g.fontFace, op)
+	}
+}
+
 // Layout handles window resizing
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	if outsideWidth != g.screenWidth || outsideHeight != g.screenHeight {
@@ -365,9 +527,12 @@ func (g *Game) onResize() {
 	// Update ball
 	g.ball.UpdatePosition(wheelCenterX, wheelCenterY, wheelRadius)
 
-	// Update stats panel
+	// Update stats panels (right stats panel, left history panel)
 	statsPanelX := float64(g.screenWidth) - StatsPanelWidth
-	g.stats.UpdatePosition(statsPanelX, 0, StatsPanelWidth, float64(g.screenHeight))
+	g.stats.UpdatePosition(
+		statsPanelX, 0, StatsPanelWidth, float64(g.screenHeight),
+		0, 0, HistoryPanelWidth, float64(g.screenHeight),
+	)
 }
 
 // Color definitions
@@ -375,6 +540,7 @@ var (
 	colorCasinoFelt    = color.RGBA{0, 80, 40, 255}
 	colorTextDim       = color.RGBA{150, 150, 150, 255}
 	colorMuteIndicator = color.RGBA{255, 100, 100, 255}
+	colorGold          = color.RGBA{218, 165, 32, 255}
 )
 
 // randomByte returns a random byte for variation (using simple PRNG for non-critical randomness)
