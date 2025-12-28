@@ -60,7 +60,7 @@ type Wheel struct {
 	IsSpinning    bool
 	TargetSlot    int     // The slot where the ball will land
 	InitialSpeed  float64 // Initial spinning speed
-	FontFace      *text.GoTextFace
+	FontSource    *text.GoTextFaceSource // Font source for creating sized faces
 }
 
 // New creates a new wheel at the given position and size
@@ -194,7 +194,7 @@ func (w *Wheel) drawSlots(screen *ebiten.Image) {
 
 // drawNumber draws a number on a slot
 func (w *Wheel) drawNumber(screen *ebiten.Image, slotIndex int, numStr string) {
-	if w.FontFace == nil {
+	if w.FontSource == nil {
 		return
 	}
 
@@ -206,26 +206,35 @@ func (w *Wheel) drawNumber(screen *ebiten.Image, slotIndex int, numStr string) {
 	y := w.CenterY + midRadius*math.Sin(angle)
 
 	// Calculate font size based on wheel radius (scale with wheel size)
-	fontSize := w.Radius * 0.045
-	if fontSize < 8 {
-		fontSize = 8
+	// Use a size that fits well in the slot width
+	fontSize := w.Radius * 0.05
+	if fontSize < 10 {
+		fontSize = 10
 	}
-	if fontSize > 24 {
-		fontSize = 24
+	if fontSize > 28 {
+		fontSize = 28
 	}
 
-	// Create a scaled font face for the number
-	scaledFace := &text.GoTextFace{
-		Source: w.FontFace.Source,
+	// Create a properly sized font face for the number
+	face := &text.GoTextFace{
+		Source: w.FontSource,
 		Size:   fontSize,
 	}
 
 	// Measure text to center it properly
-	textWidth, textHeight := text.Measure(numStr, scaledFace, 0)
+	textWidth, textHeight := text.Measure(numStr, face, 0)
+
+	// Draw shadow for better readability
+	shadowOp := &text.DrawOptions{}
+	shadowOffset := fontSize * 0.05
+	shadowOp.GeoM.Translate(-textWidth/2+shadowOffset, -textHeight/2+shadowOffset)
+	shadowOp.GeoM.Rotate(angle + math.Pi/2) // Rotate to align with slot
+	shadowOp.GeoM.Translate(x, y)
+	shadowOp.ColorScale.ScaleWithColor(color.RGBA{0, 0, 0, 120})
+	text.Draw(screen, numStr, face, shadowOp)
 
 	// Draw the number with rotation so it aligns radially
 	op := &text.DrawOptions{}
-
 	// First translate to center of text, rotate, then translate to position
 	// The text should be rotated so it points outward from the center
 	op.GeoM.Translate(-textWidth/2, -textHeight/2)
@@ -233,7 +242,7 @@ func (w *Wheel) drawNumber(screen *ebiten.Image, slotIndex int, numStr string) {
 	op.GeoM.Translate(x, y)
 
 	op.ColorScale.ScaleWithColor(color.White)
-	text.Draw(screen, numStr, scaledFace, op)
+	text.Draw(screen, numStr, face, op)
 }
 
 // drawCenter draws the center hub of the wheel

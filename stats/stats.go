@@ -9,6 +9,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+
+	"roulette-wheel/fonts"
 )
 
 // Stats tracks roulette statistics
@@ -214,16 +216,16 @@ func (s *Stats) UpdatePosition(panelX, panelY, panelWidth, panelHeight, histPane
 }
 
 // Draw renders both panels (history on left, stats on right)
-func (s *Stats) Draw(screen *ebiten.Image, fontFace *text.GoTextFace) {
+func (s *Stats) Draw(screen *ebiten.Image, fontMgr *fonts.Manager) {
 	// Draw left history panel
-	s.DrawHistoryPanel(screen, fontFace)
+	s.DrawHistoryPanel(screen, fontMgr)
 
 	// Draw right stats panel
-	s.DrawStatsPanel(screen, fontFace)
+	s.DrawStatsPanel(screen, fontMgr)
 }
 
 // DrawHistoryPanel renders the vertical history panel on the left side
-func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontFace *text.GoTextFace) {
+func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontMgr *fonts.Manager) {
 	// Draw panel background
 	vector.DrawFilledRect(screen, float32(s.HistoryPanelX), float32(s.HistoryPanelY),
 		float32(s.HistoryPanelWidth), float32(s.HistoryPanelHeight), ColorPanel, false)
@@ -236,9 +238,10 @@ func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontFace *text.GoTextFace
 	y := s.HistoryPanelY + 25
 	centerX := s.HistoryPanelX + s.HistoryPanelWidth/2
 
-	// "LAST" section with large chip for most recent result
-	s.drawText(screen, fontFace, "LAST", s.HistoryPanelX+padding+18, y, ColorGold, 1.2)
-	y += 30
+	// "LAST" section title with proper font sizing
+	titleFace := fontMgr.Face(fonts.SizeMedium) // 24pt for section title
+	s.drawTextWithFace(screen, titleFace, "LAST", s.HistoryPanelX+padding+15, y, ColorGold)
+	y += 35
 
 	if len(s.History) > 0 {
 		lastNum := s.History[len(s.History)-1]
@@ -249,11 +252,12 @@ func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontFace *text.GoTextFace
 		vector.DrawFilledCircle(screen, float32(centerX), float32(y+lastChipSize), float32(lastChipSize), lastColor, false)
 		vector.StrokeCircle(screen, float32(centerX), float32(y+lastChipSize), float32(lastChipSize), 2, ColorGold, false)
 
-		// Draw number text centered in circle
-		textScale := 1.8
-		textOffsetX := -10.0 * float64(len(lastNum))
-		textOffsetY := -14.0
-		s.drawText(screen, fontFace, lastNum, centerX+textOffsetX, y+lastChipSize+textOffsetY, ColorText, textScale)
+		// Draw number text centered in circle - use properly sized font
+		chipFace := fontMgr.Face(fonts.SizeLarge) // 36pt for large chip number
+		textWidth, textHeight := text.Measure(lastNum, chipFace, 0)
+		chipTextX := centerX - textWidth/2
+		chipTextY := y + lastChipSize - textHeight/2
+		s.drawTextWithFace(screen, chipFace, lastNum, chipTextX, chipTextY, ColorText)
 
 		y += lastChipSize*2 + 15
 	} else {
@@ -265,13 +269,17 @@ func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontFace *text.GoTextFace
 		float32(s.HistoryPanelX+s.HistoryPanelWidth-10), float32(y), 1, ColorGold, false)
 	y += 15
 
-	// "HISTORY" title
-	s.drawText(screen, fontFace, "HISTORY", s.HistoryPanelX+padding+5, y, ColorGold, 1.0)
+	// "HISTORY" title with proper font sizing
+	historyTitleFace := fontMgr.Face(fonts.SizeBody) // 18pt for smaller title
+	s.drawTextWithFace(screen, historyTitleFace, "HISTORY", s.HistoryPanelX+padding+10, y, ColorGold)
 	y += 30
 
 	// Draw history vertically (newest at top, skip first since it's shown in LAST)
 	chipSize := 20.0
 	spacing := chipSize*2 + 6
+
+	// Use small font for history chip numbers
+	historyFace := fontMgr.Face(fonts.SizeSmall) // 14pt for history chips
 
 	startIdx := len(s.History) - 2 // Skip the most recent (shown in LAST)
 	for i := startIdx; i >= 0; i-- {
@@ -287,18 +295,18 @@ func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontFace *text.GoTextFace
 		vector.DrawFilledCircle(screen, float32(centerX), float32(y+chipSize), float32(chipSize), chipColor, false)
 		vector.StrokeCircle(screen, float32(centerX), float32(y+chipSize), float32(chipSize), 1.5, ColorGold, false)
 
-		// Draw number text centered in circle
-		textScale := 0.85
-		textOffsetX := -5.0 * float64(len(num))
-		textOffsetY := -6.0
-		s.drawText(screen, fontFace, num, centerX+textOffsetX, y+chipSize+textOffsetY, ColorText, textScale)
+		// Draw number text centered in circle - properly measured
+		textWidth, textHeight := text.Measure(num, historyFace, 0)
+		textX := centerX - textWidth/2
+		textY := y + chipSize - textHeight/2
+		s.drawTextWithFace(screen, historyFace, num, textX, textY, ColorText)
 
 		y += spacing
 	}
 }
 
 // DrawStatsPanel renders the statistics panel on the right side
-func (s *Stats) DrawStatsPanel(screen *ebiten.Image, fontFace *text.GoTextFace) {
+func (s *Stats) DrawStatsPanel(screen *ebiten.Image, fontMgr *fonts.Manager) {
 	// Draw panel background
 	vector.DrawFilledRect(screen, float32(s.PanelX), float32(s.PanelY),
 		float32(s.PanelWidth), float32(s.PanelHeight), ColorPanel, false)
@@ -311,65 +319,74 @@ func (s *Stats) DrawStatsPanel(screen *ebiten.Image, fontFace *text.GoTextFace) 
 	padding := 20.0
 	lineHeight := 35.0
 
-	// Title
-	s.drawText(screen, fontFace, "STATISTICS", s.PanelX+padding, y, ColorGold, 1.5)
-	y += lineHeight * 1.5
+	// Get font faces for different sizes
+	titleFace := fontMgr.Face(fonts.SizeLarge)   // 36pt for main title
+	headerFace := fontMgr.Face(fonts.SizeBody)   // 18pt for section headers
+	bodyFace := fontMgr.Face(fonts.SizeBody)     // 18pt for body text
+	smallFace := fontMgr.Face(fonts.SizeSmall)   // 14pt for bar labels
+
+	// Title - "STATISTICS" with premium look
+	s.drawTextWithFace(screen, titleFace, "STATISTICS", s.PanelX+padding, y, ColorGold)
+	y += lineHeight * 1.8
 
 	// Total spins
-	s.drawText(screen, fontFace, fmt.Sprintf("Total Spins: %d", s.TotalSpins), s.PanelX+padding, y, ColorText, 1.0)
+	s.drawTextWithFace(screen, bodyFace, fmt.Sprintf("Total Spins: %d", s.TotalSpins), s.PanelX+padding, y, ColorText)
 	y += lineHeight * 1.5
 
 	// Hot Numbers
-	s.drawText(screen, fontFace, "Hot Numbers:", s.PanelX+padding, y, ColorHot, 1.0)
+	s.drawTextWithFace(screen, headerFace, "Hot Numbers:", s.PanelX+padding, y, ColorHot)
 	y += lineHeight * 0.8
 	hotNums := s.GetHotNumbers(5)
-	s.drawNumberList(screen, fontFace, hotNums, s.PanelX+padding, y)
+	s.drawNumberListWithFonts(screen, fontMgr, hotNums, s.PanelX+padding, y)
 	y += lineHeight * 1.2
 
 	// Cold Numbers
-	s.drawText(screen, fontFace, "Cold Numbers:", s.PanelX+padding, y, ColorCold, 1.0)
+	s.drawTextWithFace(screen, headerFace, "Cold Numbers:", s.PanelX+padding, y, ColorCold)
 	y += lineHeight * 0.8
 	coldNums := s.GetColdNumbers(5)
-	s.drawNumberList(screen, fontFace, coldNums, s.PanelX+padding, y)
+	s.drawNumberListWithFonts(screen, fontMgr, coldNums, s.PanelX+padding, y)
 	y += lineHeight * 1.5
 
 	// Percentage bars
-	s.drawPercentageBar(screen, fontFace, "Red/Black", s.PanelX+padding, y, s.PanelWidth-padding*2,
+	s.drawPercentageBarWithFonts(screen, bodyFace, smallFace, "Red/Black", s.PanelX+padding, y, s.PanelWidth-padding*2,
 		s.RedCount, s.BlackCount, ColorRed, ColorBlack)
 	y += lineHeight * 1.5
 
-	s.drawPercentageBar(screen, fontFace, "Even/Odd", s.PanelX+padding, y, s.PanelWidth-padding*2,
+	s.drawPercentageBarWithFonts(screen, bodyFace, smallFace, "Even/Odd", s.PanelX+padding, y, s.PanelWidth-padding*2,
 		s.EvenCount, s.OddCount, color.RGBA{30, 60, 120, 255}, color.RGBA{100, 150, 220, 255})
 	y += lineHeight * 1.5
 
-	s.drawPercentageBar(screen, fontFace, "Low/High", s.PanelX+padding, y, s.PanelWidth-padding*2,
+	s.drawPercentageBarWithFonts(screen, bodyFace, smallFace, "Low/High", s.PanelX+padding, y, s.PanelWidth-padding*2,
 		s.LowCount, s.HighCount, color.RGBA{30, 60, 120, 255}, color.RGBA{100, 150, 220, 255})
 	y += lineHeight * 1.5
 
 	// Green (0/00) count
 	if s.TotalSpins > 0 {
 		greenPct := float64(s.GreenCount) / float64(s.TotalSpins) * 100
-		s.drawText(screen, fontFace, fmt.Sprintf("Green (0/00): %d (%.1f%%)", s.GreenCount, greenPct),
-			s.PanelX+padding, y, ColorGreen, 1.0)
+		s.drawTextWithFace(screen, bodyFace, fmt.Sprintf("Green (0/00): %d (%.1f%%)", s.GreenCount, greenPct),
+			s.PanelX+padding, y, ColorGreen)
 	}
 }
 
-func (s *Stats) drawText(screen *ebiten.Image, fontFace *text.GoTextFace, str string, x, y float64, clr color.Color, scale float64) {
-	if fontFace == nil {
-		// Fallback: draw a simple indicator
+// drawTextWithFace draws text using a specific font face without scaling
+func (s *Stats) drawTextWithFace(screen *ebiten.Image, face *text.GoTextFace, str string, x, y float64, clr color.Color) {
+	if face == nil {
 		return
 	}
 
 	op := &text.DrawOptions{}
-	op.GeoM.Scale(scale, scale)
 	op.GeoM.Translate(x, y)
 	op.ColorScale.ScaleWithColor(clr)
-	text.Draw(screen, str, fontFace, op)
+	text.Draw(screen, str, face, op)
 }
 
-func (s *Stats) drawNumberList(screen *ebiten.Image, fontFace *text.GoTextFace, numbers []string, x, y float64) {
+// drawNumberListWithFonts draws chip numbers using proper font sizing
+func (s *Stats) drawNumberListWithFonts(screen *ebiten.Image, fontMgr *fonts.Manager, numbers []string, x, y float64) {
 	chipSize := 16.0
 	spacing := chipSize*2 + 8
+
+	// Use small font for chip numbers
+	face := fontMgr.Face(fonts.SizeSmall) // 14pt
 
 	for _, num := range numbers {
 		chipColor := getNumberColor(num)
@@ -381,22 +398,22 @@ func (s *Stats) drawNumberList(screen *ebiten.Image, fontFace *text.GoTextFace, 
 		vector.DrawFilledCircle(screen, float32(centerX), float32(centerY), float32(chipSize), chipColor, false)
 		vector.StrokeCircle(screen, float32(centerX), float32(centerY), float32(chipSize), 1, ColorGold, false)
 
-		// Draw number text centered in circle
-		textScale := 0.7
-		// Better centering: offset from center based on text length
-		textOffsetX := -4.0 * float64(len(num))
-		textOffsetY := -5.0
-		s.drawText(screen, fontFace, num, centerX+textOffsetX, centerY+textOffsetY, ColorText, textScale)
+		// Draw number text centered in circle - properly measured
+		textWidth, textHeight := text.Measure(num, face, 0)
+		textX := centerX - textWidth/2
+		textY := centerY - textHeight/2
+		s.drawTextWithFace(screen, face, num, textX, textY, ColorText)
 
 		x += spacing
 	}
 }
 
-func (s *Stats) drawPercentageBar(screen *ebiten.Image, fontFace *text.GoTextFace, label string, x, y, width float64,
+// drawPercentageBarWithFonts draws a percentage bar with proper font sizing
+func (s *Stats) drawPercentageBarWithFonts(screen *ebiten.Image, labelFace, pctFace *text.GoTextFace, label string, x, y, width float64,
 	count1, count2 int, color1, color2 color.Color) {
 
 	// Label
-	s.drawText(screen, fontFace, label, x, y, ColorText, 0.9)
+	s.drawTextWithFace(screen, labelFace, label, x, y, ColorText)
 	y += 22
 
 	barHeight := 20.0
@@ -414,11 +431,16 @@ func (s *Stats) drawPercentageBar(screen *ebiten.Image, fontFace *text.GoTextFac
 		// Second color portion
 		vector.DrawFilledRect(screen, float32(x+width1), float32(y), float32(width-width1), float32(barHeight), color2, false)
 
-		// Percentage labels
+		// Percentage labels - properly positioned
 		pct1Text := fmt.Sprintf("%.0f%%", pct1*100)
 		pct2Text := fmt.Sprintf("%.0f%%", (1-pct1)*100)
-		s.drawText(screen, fontFace, pct1Text, x+5, y+2, ColorText, 0.8)
-		s.drawText(screen, fontFace, pct2Text, x+width-35, y+2, ColorText, 0.8)
+
+		// Left percentage
+		s.drawTextWithFace(screen, pctFace, pct1Text, x+5, y+3, ColorText)
+
+		// Right percentage - measure to right-align
+		pct2Width, _ := text.Measure(pct2Text, pctFace, 0)
+		s.drawTextWithFace(screen, pctFace, pct2Text, x+width-pct2Width-5, y+3, ColorText)
 	}
 
 	// Border

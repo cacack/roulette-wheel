@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bytes"
 	"image/color"
 	"log"
 	"math"
@@ -11,10 +10,10 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
-	"golang.org/x/image/font/gofont/gobold"
 
 	"roulette-wheel/audio"
 	"roulette-wheel/ball"
+	"roulette-wheel/fonts"
 	"roulette-wheel/stats"
 	"roulette-wheel/wheel"
 )
@@ -51,7 +50,7 @@ type Game struct {
 	stats  *stats.Stats
 	audio  *audio.Audio
 
-	fontFace *text.GoTextFace
+	fontMgr *fonts.Manager
 
 	// Window state
 	screenWidth  int
@@ -80,8 +79,8 @@ func NewGame() *Game {
 		screenHeight: DefaultWindowHeight,
 	}
 
-	// Initialize font
-	g.initFont()
+	// Initialize font manager with premium fonts
+	g.fontMgr = fonts.NewManager()
 
 	// Calculate initial layout
 	wheelRadius := g.calculateWheelRadius()
@@ -89,7 +88,7 @@ func NewGame() *Game {
 
 	// Initialize components
 	g.wheel = wheel.New(wheelCenterX, wheelCenterY, wheelRadius)
-	g.wheel.FontFace = g.fontFace
+	g.wheel.FontSource = g.fontMgr.Source()
 	g.ball = ball.New(wheelCenterX, wheelCenterY, wheelRadius)
 	g.audio = audio.New()
 
@@ -117,19 +116,6 @@ func NewGame() *Game {
 	return g
 }
 
-// initFont initializes the font for text rendering
-func (g *Game) initFont() {
-	s, err := text.NewGoTextFaceSource(bytes.NewReader(gobold.TTF))
-	if err != nil {
-		log.Printf("Failed to load font: %v", err)
-		return
-	}
-
-	g.fontFace = &text.GoTextFace{
-		Source: s,
-		Size:   18,
-	}
-}
 
 // calculateWheelRadius returns the optimal wheel radius for current screen
 func (g *Game) calculateWheelRadius() float64 {
@@ -389,7 +375,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	g.ball.Draw(screen)
 
 	// Draw stats panel
-	g.stats.Draw(screen, g.fontFace)
+	g.stats.Draw(screen, g.fontMgr)
 
 	// Draw controls help (bottom left)
 	g.drawControls(screen)
@@ -405,7 +391,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 // drawControls draws the control hints at the bottom of the screen
 func (g *Game) drawControls(screen *ebiten.Image) {
-	if g.fontFace == nil {
+	face := g.fontMgr.Face(fonts.SizeSmall)
+	if face == nil {
 		return
 	}
 
@@ -414,19 +401,20 @@ func (g *Game) drawControls(screen *ebiten.Image) {
 	op := &text.DrawOptions{}
 	op.GeoM.Translate(20, float64(g.screenHeight)-30)
 	op.ColorScale.ScaleWithColor(colorTextDim)
-	text.Draw(screen, controls, g.fontFace, op)
+	text.Draw(screen, controls, face, op)
 }
 
 // drawMuteIndicator shows when audio is muted
 func (g *Game) drawMuteIndicator(screen *ebiten.Image) {
-	if g.fontFace == nil {
+	face := g.fontMgr.Face(fonts.SizeBody)
+	if face == nil {
 		return
 	}
 
 	op := &text.DrawOptions{}
 	op.GeoM.Translate(20, 30)
 	op.ColorScale.ScaleWithColor(colorMuteIndicator)
-	text.Draw(screen, "MUTED", g.fontFace, op)
+	text.Draw(screen, "MUTED", face, op)
 }
 
 // drawWinningAnimation renders the winning number reveal animation
@@ -473,6 +461,11 @@ func (g *Game) drawWinningAnimation(screen *ebiten.Image) {
 		currentRadius = fullRadius + (targetRadius-fullRadius)*eased
 	}
 
+	// Draw subtle glow behind the circle for premium effect
+	glowRadius := currentRadius * 1.15
+	glowColor := color.RGBA{g.animWinningColor.R, g.animWinningColor.G, g.animWinningColor.B, 80}
+	vector.DrawFilledCircle(screen, float32(currentX), float32(currentY), float32(glowRadius), glowColor, false)
+
 	// Draw the circle with winning color
 	vector.DrawFilledCircle(screen, float32(currentX), float32(currentY), float32(currentRadius), g.animWinningColor, false)
 
@@ -483,24 +476,42 @@ func (g *Game) drawWinningAnimation(screen *ebiten.Image) {
 	}
 	vector.StrokeCircle(screen, float32(currentX), float32(currentY), float32(currentRadius), borderWidth, colorGold, false)
 
-	// Draw the winning number text
-	if g.fontFace != nil {
-		// Scale text based on circle size
-		textScale := currentRadius / 50.0 // Base scale factor
-		if textScale < 0.7 {
-			textScale = 0.7
+	// Draw the winning number text using properly sized font (no scaling!)
+	// Select appropriate font size based on circle radius
+	var face *text.GoTextFace
+	if currentRadius >= 200 {
+		face = g.fontMgr.Face(fonts.SizeWinLarge) // 144pt for large display
+	} else if currentRadius >= 100 {
+		face = g.fontMgr.Face(fonts.SizeWinSmall) // 96pt
+	} else if currentRadius >= 60 {
+		face = g.fontMgr.Face(fonts.SizeHuge) // 72pt
+	} else if currentRadius >= 40 {
+		face = g.fontMgr.Face(fonts.SizeXLarge) // 48pt
+	} else if currentRadius >= 25 {
+		face = g.fontMgr.Face(fonts.SizeLarge) // 36pt
+	} else {
+		face = g.fontMgr.Face(fonts.SizeMedium) // 24pt
+	}
+
+	if face != nil {
+		// Measure text for precise centering
+		textWidth, textHeight := text.Measure(g.animWinningNum, face, 0)
+
+		// Draw shadow for depth (offset slightly down and right)
+		shadowOffset := currentRadius * 0.02
+		if shadowOffset < 1 {
+			shadowOffset = 1
 		}
+		shadowOp := &text.DrawOptions{}
+		shadowOp.GeoM.Translate(currentX-textWidth/2+shadowOffset, currentY-textHeight/2+shadowOffset)
+		shadowOp.ColorScale.ScaleWithColor(color.RGBA{0, 0, 0, 100})
+		text.Draw(screen, g.animWinningNum, face, shadowOp)
 
-		// Calculate text position (centered in circle)
-		textLen := float64(len(g.animWinningNum))
-		textOffsetX := -textLen * 6 * textScale
-		textOffsetY := -8 * textScale
-
+		// Draw main text centered in circle
 		op := &text.DrawOptions{}
-		op.GeoM.Scale(textScale, textScale)
-		op.GeoM.Translate(currentX+textOffsetX, currentY+textOffsetY)
+		op.GeoM.Translate(currentX-textWidth/2, currentY-textHeight/2)
 		op.ColorScale.ScaleWithColor(color.White)
-		text.Draw(screen, g.animWinningNum, g.fontFace, op)
+		text.Draw(screen, g.animWinningNum, face, op)
 	}
 }
 
