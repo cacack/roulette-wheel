@@ -139,7 +139,30 @@ func (g *Game) Update() error {
 	// Update ball physics
 	g.ball.Update(g.wheel.Rotation, g.wheel.AngularSpeed)
 
+	// Sync rolling audio with ball state
+	g.syncRollingAudio()
+
 	return nil
+}
+
+// syncRollingAudio synchronizes the rolling sound with ball physics
+func (g *Game) syncRollingAudio() {
+	switch g.ball.Phase {
+	case ball.PhaseOrbiting, ball.PhaseDropping:
+		// Start rolling sound if not already playing
+		if !g.audio.IsRolling() {
+			g.audio.StartRolling()
+		}
+		// Update volume based on angular speed
+		speedRatio := math.Abs(g.ball.AngularSpeed) / ball.InitialAngularSpeed
+		g.audio.UpdateRollingVolume(speedRatio)
+
+	case ball.PhaseBouncing, ball.PhaseSettled, ball.PhaseIdle:
+		// Stop rolling sound when ball is bouncing or settled
+		if g.audio.IsRolling() {
+			g.audio.StopRolling()
+		}
+	}
 }
 
 // handleInput processes user input
@@ -163,11 +186,15 @@ func (g *Game) handleInput() {
 	// Mute: M
 	if inpututil.IsKeyJustPressed(ebiten.KeyM) {
 		g.audio.ToggleMute()
+		// Stop rolling sound when muted
+		if g.audio.IsMuted() {
+			g.audio.StopRolling()
+		}
 	}
 
 	// Reset stats: R
 	if inpututil.IsKeyJustPressed(ebiten.KeyR) {
-		g.stats.Reset()
+		g.resetGame()
 	}
 
 	// Exit: Escape
@@ -194,6 +221,25 @@ func (g *Game) startSpin() {
 
 	// Start ball spinning (opposite direction)
 	g.ball.StartSpin(g.wheel.Rotation)
+}
+
+// resetGame resets the game state and stops all sounds
+func (g *Game) resetGame() {
+	// Stop rolling sound first
+	g.audio.StopRolling()
+
+	// Reset ball and wheel state
+	g.ball.Reset()
+	g.wheel.Stop()
+
+	// Reset game flags
+	g.isSpinning = false
+	g.spinStarted = false
+	g.ballSettled = false
+	g.resultDeclared = false
+
+	// Reset stats
+	g.stats.Reset()
 }
 
 // updateWheel updates wheel rotation and applies friction

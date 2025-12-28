@@ -17,21 +17,26 @@ const (
 
 // Audio represents the audio manager
 type Audio struct {
-	context     *audio.Context
-	muted       bool
-	mu          sync.Mutex
+	context *audio.Context
+	muted   bool
+	mu      sync.Mutex
 
 	// Pre-generated sound buffers
-	tickSound   []byte
-	bounceSound []byte
-	settleSound []byte
-	chimeSound  []byte
+	tickSound    []byte
+	bounceSound  []byte
+	settleSound  []byte
+	chimeSound   []byte
+	rollingSound []byte
 
 	// Players for concurrent playback
 	tickPlayer   *audio.Player
 	bouncePlayer *audio.Player
 	settlePlayer *audio.Player
 	chimePlayer  *audio.Player
+
+	// Rolling sound (continuous looping player)
+	rollingPlayer *audio.Player
+	isRolling     bool
 }
 
 // New creates a new audio manager
@@ -57,6 +62,7 @@ func (a *Audio) generateSounds() {
 	a.bounceSound = generateBounce()
 	a.settleSound = generateSettle()
 	a.chimeSound = generateChime()
+	a.rollingSound = generateRollingLoop()
 }
 
 // PlayTick plays the wheel tick sound
@@ -77,6 +83,72 @@ func (a *Audio) PlaySettle() {
 // PlayChime plays the win chime sound
 func (a *Audio) PlayChime() {
 	a.playSound(a.chimeSound)
+}
+
+// StartRolling starts the continuous rolling sound
+func (a *Audio) StartRolling() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.muted || a.rollingSound == nil || a.isRolling {
+		return
+	}
+
+	if a.context == nil {
+		return
+	}
+
+	// Create an infinite loop from the rolling sound buffer
+	loop := audio.NewInfiniteLoop(bytes.NewReader(a.rollingSound), int64(len(a.rollingSound)))
+	player, err := a.context.NewPlayer(loop)
+	if err != nil {
+		return
+	}
+
+	a.rollingPlayer = player
+	a.rollingPlayer.SetVolume(0.3)
+	a.rollingPlayer.Play()
+	a.isRolling = true
+}
+
+// StopRolling stops the continuous rolling sound
+func (a *Audio) StopRolling() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.rollingPlayer != nil {
+		a.rollingPlayer.Close()
+		a.rollingPlayer = nil
+	}
+	a.isRolling = false
+}
+
+// UpdateRollingVolume updates the rolling sound volume based on speed ratio (0.0 to 1.0)
+func (a *Audio) UpdateRollingVolume(speedRatio float64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.rollingPlayer == nil || !a.isRolling {
+		return
+	}
+
+	// Clamp speed ratio and scale to reasonable volume range
+	if speedRatio < 0.05 {
+		speedRatio = 0.05
+	}
+	if speedRatio > 1.0 {
+		speedRatio = 1.0
+	}
+
+	volume := speedRatio * 0.4 // Max volume of 0.4
+	a.rollingPlayer.SetVolume(volume)
+}
+
+// IsRolling returns true if the rolling sound is currently playing
+func (a *Audio) IsRolling() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.isRolling
 }
 
 // playSound plays a sound buffer
@@ -155,9 +227,9 @@ func generateTick() []byte {
 	return buf
 }
 
-// generateBounce creates a ball bounce sound
+// generateBounce creates a ball bounce sound with metallic ring
 func generateBounce() []byte {
-	duration := 0.1 // 100ms
+	duration := 0.15 // 150ms for metallic ring
 	samples := int(SampleRate * duration)
 
 	buf := make([]byte, samples*4)
@@ -165,16 +237,25 @@ func generateBounce() []byte {
 	for i := 0; i < samples; i++ {
 		t := float64(i) / SampleRate
 
-		// Impact with quick decay
-		envelope := math.Exp(-t * 40)
+		// Fast impact decay for the thud
+		impactEnv := math.Exp(-t * 50)
+		// Slower decay for the metallic ring
+		ringEnv := math.Exp(-t * 20)
 
-		// Low thud with some higher harmonics
-		sample := math.Sin(2*math.Pi*200*t)*0.5 +
-			math.Sin(2*math.Pi*400*t)*0.3 +
-			math.Sin(2*math.Pi*800*t)*0.15 +
-			(randomNoise()*0.05)*envelope // Add some noise for realism
+		// Impact component (low thud)
+		impact := math.Sin(2*math.Pi*180*t)*0.4 +
+			math.Sin(2*math.Pi*360*t)*0.2
 
-		sample *= envelope * 0.4
+		// Metallic ring component (higher frequencies for metal ball on metal slots)
+		ring := math.Sin(2*math.Pi*2400*t)*0.15 +
+			math.Sin(2*math.Pi*3600*t)*0.08 +
+			math.Sin(2*math.Pi*4800*t)*0.04
+
+		// Noise for texture
+		noise := randomNoise() * 0.02 * impactEnv
+
+		sample := impact*impactEnv + ring*ringEnv + noise
+		sample *= 0.5
 
 		val := int16(sample * 32767)
 
@@ -244,6 +325,44 @@ func generateChime() []byte {
 
 		sample *= envelope * 0.3
 
+		val := int16(sample * 32767)
+
+		binary.LittleEndian.PutUint16(buf[i*4:], uint16(val))
+		binary.LittleEndian.PutUint16(buf[i*4+2:], uint16(val))
+	}
+
+	return buf
+}
+
+// generateRollingLoop creates a loopable rolling/rumbling sound using filtered noise
+func generateRollingLoop() []byte {
+	duration := 0.5 // 500ms loop
+	samples := int(SampleRate * duration)
+
+	buf := make([]byte, samples*4)
+
+	// State for filtered noise (low-pass filter)
+	var prevSample float64 = 0
+	filterCoeff := 0.95 // Higher = darker, more woody rumble
+
+	for i := 0; i < samples; i++ {
+		// Generate white noise
+		noise := randomNoise()
+
+		// Simple 1-pole low-pass filter -> brown-ish noise for rumble
+		filtered := filterCoeff*prevSample + (1-filterCoeff)*noise
+		prevSample = filtered
+
+		// Apply gentle envelope for seamless loop
+		t := float64(i) / float64(samples)
+		envelope := 1.0
+		if t < 0.05 {
+			envelope = t / 0.05 // Fade in first 5%
+		} else if t > 0.95 {
+			envelope = (1 - t) / 0.05 // Fade out last 5%
+		}
+
+		sample := filtered * envelope * 0.3
 		val := int16(sample * 32767)
 
 		binary.LittleEndian.PutUint16(buf[i*4:], uint16(val))
