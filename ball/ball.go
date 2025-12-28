@@ -15,8 +15,8 @@ import (
 const (
 	InitialOrbitRadius   = 0.95  // Ratio of wheel radius for starting orbit
 	FinalOrbitRadius     = 0.76  // Ratio where ball enters slots
-	InitialAngularSpeed  = 0.15  // Initial ball speed (radians per frame)
-	FrictionCoefficient  = 0.002 // How fast the ball slows down
+	InitialAngularSpeed  = 0.45  // Initial ball speed (radians per frame) - fast casino feel
+	FrictionCoefficient  = 0.006 // How fast the ball slows down (proportional to speed increase)
 	DropThreshold        = 0.03  // Speed at which ball starts dropping
 	BounceDecay          = 0.6   // Energy retained after bounce
 	SettleThreshold      = 0.001 // Speed at which ball settles

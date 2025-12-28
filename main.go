@@ -24,9 +24,9 @@ const (
 	DefaultWindowHeight = 720
 	TargetFPS           = 60
 	StatsPanelWidth     = 300
-	WheelSpinSpeed      = 0.05     // Faster initial spin
-	WheelFriction       = 0.00008  // Normal friction while ball is spinning
-	WheelBrakeFriction  = 0.0002   // Higher friction after ball settles (~2 sec to stop)
+	WheelSpinSpeed      = 0.085    // Fast initial spin for casino feel
+	WheelFriction       = 0.00014  // Normal friction while ball is spinning (proportional to speed increase)
+	WheelBrakeFriction  = 0.00034  // Higher friction after ball settles (~2 sec to stop)
 )
 
 // Game represents the main game state
