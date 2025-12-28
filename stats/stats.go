@@ -125,9 +125,40 @@ func (s *Stats) GetHotNumbers(n int) []string {
 	return s.getTopNumbers(n, true)
 }
 
-// GetColdNumbers returns the least frequently hit numbers
+// GetColdNumbers returns the least frequently hit numbers (including those never hit)
 func (s *Stats) GetColdNumbers(n int) []string {
-	return s.getTopNumbers(n, false)
+	// All possible roulette numbers
+	allNumbers := []string{
+		"0", "00", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+		"11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
+		"21", "22", "23", "24", "25", "26", "27", "28", "29", "30",
+		"31", "32", "33", "34", "35", "36",
+	}
+
+	type numCount struct {
+		num   string
+		count int
+	}
+
+	var counts []numCount
+	for _, num := range allNumbers {
+		counts = append(counts, numCount{num, s.Counts[num]})
+	}
+
+	// Sort by count ascending (least frequent first), with secondary sort by number for stability
+	sort.Slice(counts, func(i, j int) bool {
+		if counts[i].count != counts[j].count {
+			return counts[i].count < counts[j].count
+		}
+		// When counts are equal, sort by number for stability
+		return counts[i].num < counts[j].num
+	})
+
+	result := make([]string, 0, n)
+	for i := 0; i < n && i < len(counts); i++ {
+		result = append(result, counts[i].num)
+	}
+	return result
 }
 
 func (s *Stats) getTopNumbers(n int, hot bool) []string {
@@ -141,11 +172,16 @@ func (s *Stats) getTopNumbers(n int, hot bool) []string {
 		counts = append(counts, numCount{num, count})
 	}
 
+	// Sort with secondary key (number) to ensure stable ordering
 	sort.Slice(counts, func(i, j int) bool {
-		if hot {
-			return counts[i].count > counts[j].count
+		if counts[i].count != counts[j].count {
+			if hot {
+				return counts[i].count > counts[j].count
+			}
+			return counts[i].count < counts[j].count
 		}
-		return counts[i].count < counts[j].count
+		// When counts are equal, sort by number for stability
+		return counts[i].num < counts[j].num
 	})
 
 	result := make([]string, 0, n)
@@ -187,31 +223,31 @@ func (s *Stats) Draw(screen *ebiten.Image, fontFace *text.GoTextFace) {
 
 	// Last Number (large display)
 	s.drawText(screen, fontFace, "Last Number:", s.PanelX+padding, y, ColorText, 1.0)
-	y += lineHeight * 0.8
+	y += lineHeight * 1.2
 	if len(s.History) > 0 {
 		lastNum := s.History[len(s.History)-1]
 		s.drawLastNumber(screen, fontFace, lastNum, s.PanelX+padding, y)
 	}
-	y += lineHeight * 2
+	y += lineHeight * 2.8
 
 	// History
 	s.drawText(screen, fontFace, "History:", s.PanelX+padding, y, ColorText, 1.0)
 	y += lineHeight * 0.8
-	s.drawHistory(screen, y)
+	s.drawHistory(screen, fontFace, y)
 	y += lineHeight * 1.5
 
 	// Hot Numbers
 	s.drawText(screen, fontFace, "Hot Numbers:", s.PanelX+padding, y, ColorHot, 1.0)
 	y += lineHeight * 0.8
 	hotNums := s.GetHotNumbers(5)
-	s.drawNumberList(screen, hotNums, s.PanelX+padding, y)
+	s.drawNumberList(screen, fontFace, hotNums, s.PanelX+padding, y)
 	y += lineHeight * 1.2
 
 	// Cold Numbers
 	s.drawText(screen, fontFace, "Cold Numbers:", s.PanelX+padding, y, ColorCold, 1.0)
 	y += lineHeight * 0.8
 	coldNums := s.GetColdNumbers(5)
-	s.drawNumberList(screen, coldNums, s.PanelX+padding, y)
+	s.drawNumberList(screen, fontFace, coldNums, s.PanelX+padding, y)
 	y += lineHeight * 1.5
 
 	// Percentage bars
@@ -220,11 +256,11 @@ func (s *Stats) Draw(screen *ebiten.Image, fontFace *text.GoTextFace) {
 	y += lineHeight * 1.5
 
 	s.drawPercentageBar(screen, fontFace, "Even/Odd", s.PanelX+padding, y, s.PanelWidth-padding*2,
-		s.EvenCount, s.OddCount, color.RGBA{100, 100, 200, 255}, color.RGBA{200, 100, 100, 255})
+		s.EvenCount, s.OddCount, color.RGBA{30, 60, 120, 255}, color.RGBA{100, 150, 220, 255})
 	y += lineHeight * 1.5
 
 	s.drawPercentageBar(screen, fontFace, "Low/High", s.PanelX+padding, y, s.PanelWidth-padding*2,
-		s.LowCount, s.HighCount, color.RGBA{100, 200, 100, 255}, color.RGBA{200, 200, 100, 255})
+		s.LowCount, s.HighCount, color.RGBA{30, 60, 120, 255}, color.RGBA{100, 150, 220, 255})
 	y += lineHeight * 1.5
 
 	// Green (0/00) count
@@ -259,11 +295,15 @@ func (s *Stats) drawLastNumber(screen *ebiten.Image, fontFace *text.GoTextFace, 
 	vector.DrawFilledCircle(screen, float32(centerX), float32(centerY), float32(chipSize), chipColor, false)
 	vector.StrokeCircle(screen, float32(centerX), float32(centerY), float32(chipSize), 3, ColorGold, false)
 
-	// Number text
-	s.drawText(screen, fontFace, number, centerX-15, centerY-10, ColorText, 2.0)
+	// Number text centered in circle
+	textScale := 2.0
+	// Better centering: offset from center based on text length
+	textOffsetX := -11.0 * float64(len(number))
+	textOffsetY := -14.0
+	s.drawText(screen, fontFace, number, centerX+textOffsetX, centerY+textOffsetY, ColorText, textScale)
 }
 
-func (s *Stats) drawHistory(screen *ebiten.Image, y float64) {
+func (s *Stats) drawHistory(screen *ebiten.Image, fontFace *text.GoTextFace, y float64) {
 	chipSize := 18.0
 	spacing := chipSize*2 + 5
 	x := s.PanelX + 20
@@ -273,9 +313,19 @@ func (s *Stats) drawHistory(screen *ebiten.Image, y float64) {
 		num := s.History[i]
 		chipColor := getNumberColor(num)
 
+		centerX := x + chipSize
+		centerY := y + chipSize
+
 		// Draw chip
-		vector.DrawFilledCircle(screen, float32(x+chipSize), float32(y+chipSize), float32(chipSize), chipColor, false)
-		vector.StrokeCircle(screen, float32(x+chipSize), float32(y+chipSize), float32(chipSize), 1, ColorGold, false)
+		vector.DrawFilledCircle(screen, float32(centerX), float32(centerY), float32(chipSize), chipColor, false)
+		vector.StrokeCircle(screen, float32(centerX), float32(centerY), float32(chipSize), 1, ColorGold, false)
+
+		// Draw number text centered in circle
+		textScale := 0.8
+		// Better centering: offset from center based on text length
+		textOffsetX := -5.0 * float64(len(num))
+		textOffsetY := -6.0
+		s.drawText(screen, fontFace, num, centerX+textOffsetX, centerY+textOffsetY, ColorText, textScale)
 
 		x += spacing
 		if x > s.PanelX+s.PanelWidth-40 {
@@ -284,34 +334,26 @@ func (s *Stats) drawHistory(screen *ebiten.Image, y float64) {
 	}
 }
 
-func (s *Stats) drawNumberList(screen *ebiten.Image, numbers []string, x, y float64) {
+func (s *Stats) drawNumberList(screen *ebiten.Image, fontFace *text.GoTextFace, numbers []string, x, y float64) {
 	chipSize := 16.0
 	spacing := chipSize*2 + 8
 
 	for _, num := range numbers {
 		chipColor := getNumberColor(num)
 
-		// Draw chip
-		vector.DrawFilledCircle(screen, float32(x+chipSize), float32(y+chipSize), float32(chipSize), chipColor, false)
-		vector.StrokeCircle(screen, float32(x+chipSize), float32(y+chipSize), float32(chipSize), 1, ColorGold, false)
+		centerX := x + chipSize
+		centerY := y + chipSize
 
-		// Count indicator badge
-		count := s.Counts[num]
-		if count > 0 {
-			// Draw count badge background
-			badgeX := float32(x + chipSize + 8)
-			badgeY := float32(y)
-			vector.DrawFilledRect(screen, badgeX, badgeY, 18, 14, color.RGBA{0, 0, 0, 180}, false)
-			// Draw count as small dots (1 dot per occurrence, max 5)
-			dotCount := count
-			if dotCount > 5 {
-				dotCount = 5
-			}
-			for d := 0; d < dotCount; d++ {
-				dotX := badgeX + 3 + float32(d*3)
-				vector.DrawFilledCircle(screen, dotX, badgeY+7, 2, color.White, false)
-			}
-		}
+		// Draw chip
+		vector.DrawFilledCircle(screen, float32(centerX), float32(centerY), float32(chipSize), chipColor, false)
+		vector.StrokeCircle(screen, float32(centerX), float32(centerY), float32(chipSize), 1, ColorGold, false)
+
+		// Draw number text centered in circle
+		textScale := 0.7
+		// Better centering: offset from center based on text length
+		textOffsetX := -4.0 * float64(len(num))
+		textOffsetY := -5.0
+		s.drawText(screen, fontFace, num, centerX+textOffsetX, centerY+textOffsetY, ColorText, textScale)
 
 		x += spacing
 	}
