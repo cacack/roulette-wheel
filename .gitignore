@@ -1,0 +1,11 @@
+# Build output
+dist/
+roulette-wheel
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
