@@ -208,7 +208,13 @@ func (g *Game) handleInput() {
 	if !g.isSpinning && g.animPhase == AnimPhaseNone {
 		shouldSpin := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) ||
 			inpututil.IsKeyJustPressed(ebiten.KeySpace) ||
-			inpututil.IsKeyJustPressed(ebiten.KeyEnter)
+			inpututil.IsKeyJustPressed(ebiten.KeyEnter) ||
+			inpututil.IsKeyJustPressed(ebiten.KeyArrowRight) ||
+			inpututil.IsKeyJustPressed(ebiten.KeyArrowLeft) ||
+			inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) ||
+			inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) ||
+			inpututil.IsKeyJustPressed(ebiten.KeyPageDown) ||
+			inpututil.IsKeyJustPressed(ebiten.KeyPageUp)
 
 		if shouldSpin {
 			g.startSpin()
@@ -396,7 +402,7 @@ func (g *Game) drawControls(screen *ebiten.Image) {
 		return
 	}
 
-	controls := "Click/Space: Spin | F: Fullscreen | M: Mute | R: Reset | Esc: Exit"
+	controls := "Click/Space/Arrows: Spin | F: Fullscreen | M: Mute | R: Reset | Esc: Exit"
 
 	op := &text.DrawOptions{}
 	op.GeoM.Translate(20, float64(g.screenHeight)-30)
@@ -423,12 +429,9 @@ func (g *Game) drawWinningAnimation(screen *ebiten.Image) {
 		return
 	}
 
-	// Calculate animation parameters
-	screenW := float64(g.screenWidth)
-	screenH := float64(g.screenHeight)
-
-	// Full size circle (80% of screen height)
-	fullRadius := screenH * 0.4
+	// Full size circle centered in wheel, extending to the number slots
+	// SlotInnerRatio = 0.65, so use 0.62 to reach right up to the numbers
+	fullRadius := g.wheel.Radius * 0.62
 
 	// Target position: LAST section in left panel
 	// The history panel starts at X=0, and chips are centered at X = HistoryPanelWidth/2
@@ -437,21 +440,21 @@ func (g *Game) drawWinningAnimation(screen *ebiten.Image) {
 	targetY := 93.0        // Matches LAST chip center position
 	targetRadius := 38.0   // Same size as LAST section chip
 
-	// Center of screen for full reveal
-	centerX := screenW / 2
-	centerY := screenH / 2
+	// Wheel center for full reveal (inside the brown ring)
+	centerX := g.wheel.CenterX
+	centerY := g.wheel.CenterY
 
 	var currentX, currentY, currentRadius float64
 
 	switch g.animPhase {
 	case AnimPhaseHold:
-		// Static at center with full size
+		// Static at wheel center with full size
 		currentX = centerX
 		currentY = centerY
 		currentRadius = fullRadius
 
 	case AnimPhaseShrink:
-		// Animate from center to target
+		// Animate from wheel center to target
 		progress := float64(g.animFrameCount) / float64(AnimationShrinkFrames)
 		// Ease-out cubic for smooth deceleration
 		eased := 1 - math.Pow(1-progress, 3)

@@ -9,6 +9,8 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+
+	"roulette-wheel/wheel"
 )
 
 // Ball physics constants
@@ -22,6 +24,12 @@ const (
 	SettleThreshold      = 0.001 // Speed at which ball settles
 	NumSlots             = 38
 	SlotAngle            = 2 * math.Pi / NumSlots
+
+	// Deflector collision constants
+	DeflectorAngleHitZone    = 0.12  // Angular hit zone (radians) - slightly larger than visual
+	DeflectorRadiusHitZone   = 0.04  // Radial hit zone - how close ball needs to be
+	DeflectorCooldownFrames  = 8     // Frames before same deflector can be hit again
+	DeflectorSpeedMultiplier = 0.9   // Base speed retention on deflector hit
 )
 
 // Phase represents the current phase of ball motion
@@ -56,6 +64,10 @@ type Ball struct {
 	BounceCount   int
 	MaxBounces    int
 	LastBouncePos float64
+
+	// Deflector collision tracking
+	DeflectorHitCooldowns [8]int // Cooldown frames for each deflector (prevents double-hits)
+	DeflectorHitCount     int    // Total deflector hits this spin
 
 	// Visual
 	Size float64
@@ -98,6 +110,12 @@ func (b *Ball) StartSpin(wheelRotation float64) {
 	b.TicksSinceStart = 0
 	b.MaxBounces = 5 + randomInt(5)
 	b.SettledSlot = -1 // Not settled yet
+
+	// Reset deflector collision tracking
+	b.DeflectorHitCount = 0
+	for i := range b.DeflectorHitCooldowns {
+		b.DeflectorHitCooldowns[i] = 0
+	}
 
 	// Spin duration approximately 6 seconds (360 frames at 60fps) with small variance
 	b.SpinDuration = 330 + randomInt(60) // 330-390 frames (~5.5-6.5 seconds)
@@ -173,6 +191,13 @@ func (b *Ball) updateOrbiting(wheelRotation float64) {
 
 // updateDropping handles the ball falling toward the center
 func (b *Ball) updateDropping(wheelRotation float64) {
+	// Decrement deflector cooldowns
+	for i := range b.DeflectorHitCooldowns {
+		if b.DeflectorHitCooldowns[i] > 0 {
+			b.DeflectorHitCooldowns[i]--
+		}
+	}
+
 	// Continue angular motion with more friction
 	b.AngularSpeed *= 0.995
 
@@ -188,6 +213,9 @@ func (b *Ball) updateDropping(wheelRotation float64) {
 	// Accelerate inward
 	b.RadialSpeed -= 0.0003
 	b.Radius += b.RadialSpeed
+
+	// Check for deflector collisions
+	b.checkDeflectorCollisions(wheelRotation)
 
 	// Check if ball has reached the slot area
 	if b.Radius <= FinalOrbitRadius {
@@ -269,6 +297,121 @@ func (b *Ball) settle(wheelRotation float64) {
 
 	if b.OnSettle != nil {
 		b.OnSettle()
+	}
+}
+
+// checkDeflectorCollisions checks for and handles collisions with deflectors
+func (b *Ball) checkDeflectorCollisions(wheelRotation float64) {
+	// Get deflector info from wheel package
+	deflectors := wheel.GetDeflectorInfo(wheelRotation)
+	deflectorRadiusRatio := wheel.GetDeflectorRadiusRatio()
+
+	// Check if ball is in the deflector zone (radius-wise)
+	radiusDiff := math.Abs(b.Radius - deflectorRadiusRatio)
+	if radiusDiff > DeflectorRadiusHitZone {
+		return // Ball is not at deflector radius
+	}
+
+	// Check each deflector
+	for i, deflector := range deflectors {
+		// Skip if this deflector is on cooldown
+		if b.DeflectorHitCooldowns[i] > 0 {
+			continue
+		}
+
+		// Calculate angular distance to deflector
+		angleDiff := b.Angle - deflector.Angle
+		// Normalize to [-PI, PI]
+		for angleDiff > math.Pi {
+			angleDiff -= 2 * math.Pi
+		}
+		for angleDiff < -math.Pi {
+			angleDiff += 2 * math.Pi
+		}
+
+		// Check if within hit zone
+		if math.Abs(angleDiff) < DeflectorAngleHitZone {
+			// COLLISION! Apply ricochet physics
+			b.applyDeflectorRicochet(deflector.IsVertical)
+
+			// Set cooldown to prevent immediate re-collision
+			b.DeflectorHitCooldowns[i] = DeflectorCooldownFrames
+			b.DeflectorHitCount++
+
+			// Trigger bounce callback for sound
+			if b.OnBounce != nil {
+				b.OnBounce()
+			}
+
+			// Only process one deflector hit per frame
+			break
+		}
+	}
+}
+
+// applyDeflectorRicochet applies chaotic ricochet physics when ball hits a deflector
+func (b *Ball) applyDeflectorRicochet(isVerticalDeflector bool) {
+	// Randomize the reflection behavior for chaos
+	// Base reflection: reverse or partially reverse angular velocity
+	reflectionType := randomInt(3)
+
+	switch reflectionType {
+	case 0:
+		// Full reversal with randomization
+		b.AngularSpeed = -b.AngularSpeed * (0.6 + randomFloat()*0.5)
+	case 1:
+		// Partial reversal - ball continues but slower and offset
+		b.AngularSpeed = b.AngularSpeed * (0.4 + randomFloat()*0.3)
+	case 2:
+		// Strong reversal - ball bounces back harder
+		b.AngularSpeed = -b.AngularSpeed * (0.8 + randomFloat()*0.4)
+	}
+
+	// Add random angular perturbation (±15-30 degrees worth)
+	perturbation := (randomFloat() - 0.5) * 0.5 // ±0.25 radians (~15 degrees)
+	b.AngularSpeed += perturbation * 0.1
+
+	// Vertical deflectors (pointing radially) tend to bounce ball more sideways
+	// Horizontal deflectors (pointing tangentially) tend to redirect more
+	if isVerticalDeflector {
+		// More likely to reverse direction
+		if randomFloat() > 0.4 {
+			b.AngularSpeed = -math.Abs(b.AngularSpeed) * (0.5 + randomFloat()*0.5)
+			if randomFloat() > 0.5 {
+				b.AngularSpeed = -b.AngularSpeed
+			}
+		}
+	} else {
+		// Horizontal: can send ball in either direction
+		if randomFloat() > 0.5 {
+			b.AngularSpeed = -b.AngularSpeed
+		}
+	}
+
+	// Speed multiplier: ball can gain or lose energy (0.7-1.1x)
+	speedMult := DeflectorSpeedMultiplier + (randomFloat()-0.5)*0.4
+	b.AngularSpeed *= speedMult
+
+	// Slightly affect radial speed - deflector can slow the drop or speed it up
+	radialPerturbation := (randomFloat() - 0.5) * 0.002
+	b.RadialSpeed += radialPerturbation
+
+	// Occasionally, a hard hit can push ball outward slightly
+	if randomFloat() > 0.8 {
+		b.RadialSpeed += 0.001 // Small outward push
+	}
+
+	// Ensure ball doesn't get stuck - always maintain minimum inward motion
+	if b.RadialSpeed > -0.0005 {
+		b.RadialSpeed = -0.0005
+	}
+
+	// Ensure ball has some angular velocity to continue moving
+	if math.Abs(b.AngularSpeed) < 0.005 {
+		b.AngularSpeed = 0.01
+		if randomFloat() > 0.5 {
+			b.AngularSpeed = -b.AngularSpeed
+		}
 	}
 }
 

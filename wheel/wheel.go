@@ -45,7 +45,9 @@ const (
 	SlotOuterRatio      = 0.88
 	SlotInnerRatio      = 0.65
 	CenterRatio         = 0.30
-	DeflectorRatio      = 0.90
+	DeflectorRadiusRatio = 0.90  // Between ball track and slot area
+	NumDeflectors       = 8
+	DeflectorHitRadius  = 0.06  // Hit zone radius ratio (slightly larger than visual)
 	NumSlots            = 38
 	SlotAngle           = 2 * math.Pi / NumSlots
 )
@@ -142,18 +144,34 @@ func (w *Wheel) Draw(screen *ebiten.Image) {
 
 // drawDeflectors draws the metal deflectors around the ball track
 func (w *Wheel) drawDeflectors(screen *ebiten.Image) {
-	numDeflectors := 8
-	deflectorAngle := 2 * math.Pi / float64(numDeflectors)
-	deflectorRadius := w.Radius * DeflectorRatio
+	deflectorAngle := 2 * math.Pi / float64(NumDeflectors)
+	deflectorRadius := w.Radius * DeflectorRadiusRatio
 
-	for i := 0; i < numDeflectors; i++ {
+	// Chrome colors for 3D metallic effect
+	chromeBase := color.RGBA{180, 180, 185, 255}
+	chromeHighlight := color.RGBA{240, 240, 245, 255}
+	chromeShadow := color.RGBA{100, 100, 110, 255}
+
+	for i := 0; i < NumDeflectors; i++ {
 		angle := float64(i)*deflectorAngle + w.Rotation
 		x := w.CenterX + deflectorRadius*math.Cos(angle)
 		y := w.CenterY + deflectorRadius*math.Sin(angle)
 
-		// Draw diamond-shaped deflector
-		size := w.Radius * 0.03
-		drawDiamond(screen, x, y, size, angle, ColorChrome)
+		// Larger diamond size - approximately 2x ball diameter
+		size := w.Radius * 0.045
+
+		// Alternate orientation: even = vertical (points radially), odd = horizontal (points tangentially)
+		diamondAngle := angle
+		if i%2 == 1 {
+			diamondAngle += math.Pi / 2 // Rotate 90 degrees for horizontal orientation
+		}
+
+		// Draw shadow first (offset slightly)
+		drawDiamond(screen, x+2, y+2, size, diamondAngle, chromeShadow)
+		// Draw main diamond body
+		drawDiamond(screen, x, y, size, diamondAngle, chromeBase)
+		// Draw smaller highlight diamond for 3D effect
+		drawDiamond(screen, x-size*0.15, y-size*0.15, size*0.5, diamondAngle, chromeHighlight)
 	}
 }
 
@@ -356,6 +374,38 @@ var whiteImage = func() *ebiten.Image {
 	img.Fill(color.White)
 	return img
 }()
+
+// DeflectorInfo contains information about a deflector for collision detection
+type DeflectorInfo struct {
+	Angle       float64 // Angle of deflector center (in wheel-relative coordinates)
+	RadiusRatio float64 // Radius ratio where deflector is located
+	IsVertical  bool    // True if diamond points radially, false if tangentially
+}
+
+// GetDeflectorInfo returns info about all deflectors for collision detection
+func GetDeflectorInfo(wheelRotation float64) []DeflectorInfo {
+	deflectors := make([]DeflectorInfo, NumDeflectors)
+	deflectorAngle := 2 * math.Pi / float64(NumDeflectors)
+
+	for i := 0; i < NumDeflectors; i++ {
+		deflectors[i] = DeflectorInfo{
+			Angle:       float64(i)*deflectorAngle + wheelRotation,
+			RadiusRatio: DeflectorRadiusRatio,
+			IsVertical:  i%2 == 0,
+		}
+	}
+	return deflectors
+}
+
+// GetDeflectorHitRadius returns the hit zone radius ratio for collision detection
+func GetDeflectorHitRadius() float64 {
+	return DeflectorHitRadius
+}
+
+// GetDeflectorRadiusRatio returns the radius ratio where deflectors are located
+func GetDeflectorRadiusRatio() float64 {
+	return DeflectorRadiusRatio
+}
 
 // GetNumberColor returns the color for a given number string
 func GetNumberColor(numStr string) color.RGBA {
