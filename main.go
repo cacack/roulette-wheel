@@ -484,20 +484,29 @@ func (g *Game) drawDebugInfo(screen *ebiten.Image) {
 		g.wheel.AngularSpeed, g.ball.AngularSpeed, g.getBallPhaseName(), g.updateCount)
 
 	// Line 3: Log status
-	line3 := fmt.Sprintf("Log entries: %d (saves on spin end when debug enabled)", len(g.debugLog))
+	line3 := fmt.Sprintf("Log entries: %d (saves on spin end)", len(g.debugLog))
+
+	// Position in lower right, left of stats panel
+	rightEdge := float64(g.screenWidth) - StatsPanelWidth - 20
+	bottomY := float64(g.screenHeight) - 70
+
+	// Measure text widths for right-alignment
+	w1, _ := text.Measure(line1, face, 0)
+	w2, _ := text.Measure(line2, face, 0)
+	w3, _ := text.Measure(line3, face, 0)
 
 	op := &text.DrawOptions{}
-	op.GeoM.Translate(20, 50)
+	op.GeoM.Translate(rightEdge-w1, bottomY)
 	op.ColorScale.ScaleWithColor(color.RGBA{255, 0, 255, 255}) // Magenta
 	text.Draw(screen, line1, face, op)
 
 	op2 := &text.DrawOptions{}
-	op2.GeoM.Translate(20, 70)
+	op2.GeoM.Translate(rightEdge-w2, bottomY+20)
 	op2.ColorScale.ScaleWithColor(color.RGBA{255, 0, 255, 255}) // Magenta
 	text.Draw(screen, line2, face, op2)
 
 	op3 := &text.DrawOptions{}
-	op3.GeoM.Translate(20, 90)
+	op3.GeoM.Translate(rightEdge-w3, bottomY+40)
 	op3.ColorScale.ScaleWithColor(color.RGBA{200, 0, 200, 255}) // Dimmer magenta
 	text.Draw(screen, line3, face, op3)
 }
