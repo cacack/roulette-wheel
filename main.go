@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"log"
 	"math"
@@ -70,6 +71,10 @@ type Game struct {
 	animFrameCount   int     // Frame counter for current phase
 	animWinningNum   string  // The winning number to display
 	animWinningColor color.RGBA // Color of the winning number
+
+	// Debug mode
+	showDebug    bool
+	updateCount  int // Counter for Update() calls during spin
 }
 
 // NewGame creates a new game instance
@@ -141,6 +146,11 @@ func (g *Game) calculateWheelCenter(radius float64) (float64, float64) {
 
 // Update handles game logic
 func (g *Game) Update() error {
+	// Track update calls during spin for debugging
+	if g.isSpinning {
+		g.updateCount++
+	}
+
 	// Handle input
 	g.handleInput()
 
@@ -240,6 +250,11 @@ func (g *Game) handleInput() {
 		g.resetGame()
 	}
 
+	// Debug mode: D
+	if inpututil.IsKeyJustPressed(ebiten.KeyD) {
+		g.showDebug = !g.showDebug
+	}
+
 	// Exit: Escape
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		// In fullscreen, first exit fullscreen; otherwise quit
@@ -257,6 +272,7 @@ func (g *Game) startSpin() {
 	g.spinStarted = true
 	g.ballSettled = false
 	g.resultDeclared = false
+	g.updateCount = 0 // Reset update counter for debug
 
 	// Reset animation state
 	g.animPhase = AnimPhaseNone
@@ -393,6 +409,34 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	// Draw winning animation (on top of everything)
 	g.drawWinningAnimation(screen)
+
+	// Draw debug info if enabled
+	if g.showDebug {
+		g.drawDebugInfo(screen)
+	}
+}
+
+// drawDebugInfo displays TPS, FPS, and speed diagnostics
+func (g *Game) drawDebugInfo(screen *ebiten.Image) {
+	face := g.fontMgr.Face(fonts.SizeSmall)
+	if face == nil {
+		return
+	}
+
+	// Build debug string
+	debugInfo := fmt.Sprintf("TPS: %.1f | FPS: %.1f | Wheel: %.5f | Ball: %.5f | Updates: %d",
+		ebiten.ActualTPS(),
+		ebiten.ActualFPS(),
+		g.wheel.AngularSpeed,
+		g.ball.AngularSpeed,
+		g.updateCount,
+	)
+
+	// Draw background for readability
+	op := &text.DrawOptions{}
+	op.GeoM.Translate(20, 50)
+	op.ColorScale.ScaleWithColor(color.RGBA{255, 255, 0, 255})
+	text.Draw(screen, debugInfo, face, op)
 }
 
 // drawControls draws the control hints at the bottom of the screen
@@ -402,7 +446,7 @@ func (g *Game) drawControls(screen *ebiten.Image) {
 		return
 	}
 
-	controls := "Click/Space/Arrows: Spin | F: Fullscreen | M: Mute | R: Reset | Esc: Exit"
+	controls := "Click/Space/Arrows: Spin | F: Fullscreen | M: Mute | R: Reset | D: Debug | Esc: Exit"
 
 	op := &text.DrawOptions{}
 	op.GeoM.Translate(20, float64(g.screenHeight)-30)
