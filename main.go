@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -557,9 +558,19 @@ func (g *Game) writeDebugLog(winningNumber string) {
 	// Write header
 	fmt.Fprintf(f, "# Roulette Debug Log\n")
 	fmt.Fprintf(f, "# Generated: %s\n", time.Now().Format(time.RFC3339))
-	fmt.Fprintf(f, "# Result: %s (%s)\n", winningNumber, colorName)
-	fmt.Fprintf(f, "# TPS Range: %.1f - %.1f\n", g.minTPS, g.maxTPS)
-	fmt.Fprintf(f, "# Total Updates: %d\n", g.updateCount)
+	fmt.Fprintf(f, "#\n")
+	fmt.Fprintf(f, "# System Info:\n")
+	fmt.Fprintf(f, "#   OS: %s\n", runtime.GOOS)
+	fmt.Fprintf(f, "#   Arch: %s\n", runtime.GOARCH)
+	fmt.Fprintf(f, "#   CPUs: %d\n", runtime.NumCPU())
+	fmt.Fprintf(f, "#   Go: %s\n", runtime.Version())
+	fmt.Fprintf(f, "#   Window: %dx%d\n", g.screenWidth, g.screenHeight)
+	fmt.Fprintf(f, "#\n")
+	fmt.Fprintf(f, "# Spin Results:\n")
+	fmt.Fprintf(f, "#   Result: %s (%s)\n", winningNumber, colorName)
+	fmt.Fprintf(f, "#   TPS Range: %.1f - %.1f\n", g.minTPS, g.maxTPS)
+	fmt.Fprintf(f, "#   Total Updates: %d\n", g.updateCount)
+	fmt.Fprintf(f, "#   Duration: %dms\n", time.Now().UnixMilli()-g.spinStartTime)
 	fmt.Fprintf(f, "#\n")
 	fmt.Fprintf(f, "TimeMs\tUpdate\tTPS\tFPS\tWheelSpeed\tBallSpeed\tBallPhase\tBallRadius\n")
 
