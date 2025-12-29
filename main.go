@@ -395,13 +395,14 @@ func (g *Game) declareResult() {
 	g.isSpinning = false
 	g.spinStarted = false
 
-	// Write debug log if debug mode is enabled
-	if g.showDebug && len(g.debugLog) > 0 {
-		g.writeDebugLog()
-	}
-
 	// Get the winning number from the ball's settled position
 	winningNumber := g.ball.GetWinningNumber(wheel.NumberSequence)
+
+	// Write debug log if debug mode is enabled (after we know the result)
+	if g.showDebug && len(g.debugLog) > 0 {
+		g.writeDebugLog(winningNumber)
+	}
+
 	if winningNumber != "" {
 		// Start the winning animation
 		g.animWinningNum = winningNumber
@@ -530,9 +531,19 @@ func (g *Game) getBallPhaseName() string {
 }
 
 // writeDebugLog writes the collected debug log to a file
-func (g *Game) writeDebugLog() {
+func (g *Game) writeDebugLog(winningNumber string) {
 	if len(g.debugLog) == 0 {
 		return
+	}
+
+	// Determine color name
+	colorName := "unknown"
+	if winningNumber == "0" || winningNumber == "00" {
+		colorName = "green"
+	} else if wheel.IsRed(winningNumber) {
+		colorName = "red"
+	} else if winningNumber != "" {
+		colorName = "black"
 	}
 
 	filename := fmt.Sprintf("debug_spin_%s.log", time.Now().Format("20060102_150405"))
@@ -546,6 +557,7 @@ func (g *Game) writeDebugLog() {
 	// Write header
 	fmt.Fprintf(f, "# Roulette Debug Log\n")
 	fmt.Fprintf(f, "# Generated: %s\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(f, "# Result: %s (%s)\n", winningNumber, colorName)
 	fmt.Fprintf(f, "# TPS Range: %.1f - %.1f\n", g.minTPS, g.maxTPS)
 	fmt.Fprintf(f, "# Total Updates: %d\n", g.updateCount)
 	fmt.Fprintf(f, "#\n")
