@@ -12,3 +12,6 @@ roulette-wheel
 
 # Prompts
 prompts/
+
+# Debug logs
+debug_spin_*.log
