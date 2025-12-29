@@ -9,3 +9,6 @@ roulette-wheel
 
 # OS
 .DS_Store
+
+# Prompts
+prompts/
