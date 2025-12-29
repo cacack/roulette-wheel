@@ -488,17 +488,17 @@ func (g *Game) drawDebugInfo(screen *ebiten.Image) {
 
 	op := &text.DrawOptions{}
 	op.GeoM.Translate(20, 50)
-	op.ColorScale.ScaleWithColor(color.RGBA{255, 255, 0, 255})
+	op.ColorScale.ScaleWithColor(color.RGBA{255, 0, 255, 255}) // Magenta
 	text.Draw(screen, line1, face, op)
 
 	op2 := &text.DrawOptions{}
 	op2.GeoM.Translate(20, 70)
-	op2.ColorScale.ScaleWithColor(color.RGBA{255, 255, 0, 255})
+	op2.ColorScale.ScaleWithColor(color.RGBA{255, 0, 255, 255}) // Magenta
 	text.Draw(screen, line2, face, op2)
 
 	op3 := &text.DrawOptions{}
 	op3.GeoM.Translate(20, 90)
-	op3.ColorScale.ScaleWithColor(color.RGBA{200, 200, 0, 255})
+	op3.ColorScale.ScaleWithColor(color.RGBA{200, 0, 200, 255}) // Dimmer magenta
 	text.Draw(screen, line3, face, op3)
 }
 
