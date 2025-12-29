@@ -6,6 +6,8 @@ import (
 	"image/color"
 	"log"
 	"math"
+	"os"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -44,6 +46,18 @@ const (
 	AnimPhaseShrink
 )
 
+// debugEntry represents a single log entry during a spin
+type debugEntry struct {
+	TimeMs     int64   // Milliseconds since spin start
+	UpdateNum  int     // Update count
+	TPS        float64 // Actual TPS
+	FPS        float64 // Actual FPS
+	WheelSpeed float64 // Wheel angular speed
+	BallSpeed  float64 // Ball angular speed
+	BallPhase  string  // Ball phase name
+	BallRadius float64 // Ball radius ratio
+}
+
 // Game represents the main game state
 type Game struct {
 	wheel  *wheel.Wheel
@@ -74,7 +88,11 @@ type Game struct {
 
 	// Debug mode
 	showDebug    bool
-	updateCount  int // Counter for Update() calls during spin
+	updateCount  int     // Counter for Update() calls during spin
+	minTPS       float64 // Min TPS seen during spin
+	maxTPS       float64 // Max TPS seen during spin
+	debugLog     []debugEntry // Log entries for current spin
+	spinStartTime int64  // Unix timestamp when spin started (ms)
 }
 
 // NewGame creates a new game instance
@@ -146,9 +164,32 @@ func (g *Game) calculateWheelCenter(radius float64) (float64, float64) {
 
 // Update handles game logic
 func (g *Game) Update() error {
-	// Track update calls during spin for debugging
+	// Track debug data during spin
 	if g.isSpinning {
 		g.updateCount++
+		tps := ebiten.ActualTPS()
+		if tps > 0 {
+			if tps < g.minTPS {
+				g.minTPS = tps
+			}
+			if tps > g.maxTPS {
+				g.maxTPS = tps
+			}
+		}
+
+		// Log entry every 10 updates to keep log manageable
+		if g.showDebug && g.updateCount%10 == 0 {
+			g.debugLog = append(g.debugLog, debugEntry{
+				TimeMs:     time.Now().UnixMilli() - g.spinStartTime,
+				UpdateNum:  g.updateCount,
+				TPS:        tps,
+				FPS:        ebiten.ActualFPS(),
+				WheelSpeed: g.wheel.AngularSpeed,
+				BallSpeed:  g.ball.AngularSpeed,
+				BallPhase:  g.getBallPhaseName(),
+				BallRadius: g.ball.Radius,
+			})
+		}
 	}
 
 	// Handle input
@@ -272,7 +313,13 @@ func (g *Game) startSpin() {
 	g.spinStarted = true
 	g.ballSettled = false
 	g.resultDeclared = false
-	g.updateCount = 0 // Reset update counter for debug
+
+	// Reset debug tracking
+	g.updateCount = 0
+	g.minTPS = 9999
+	g.maxTPS = 0
+	g.debugLog = nil // Clear previous log
+	g.spinStartTime = time.Now().UnixMilli()
 
 	// Reset animation state
 	g.animPhase = AnimPhaseNone
@@ -347,6 +394,11 @@ func (g *Game) declareResult() {
 	g.resultDeclared = true
 	g.isSpinning = false
 	g.spinStarted = false
+
+	// Write debug log if debug mode is enabled
+	if g.showDebug && len(g.debugLog) > 0 {
+		g.writeDebugLog()
+	}
 
 	// Get the winning number from the ball's settled position
 	winningNumber := g.ball.GetWinningNumber(wheel.NumberSequence)
@@ -423,20 +475,81 @@ func (g *Game) drawDebugInfo(screen *ebiten.Image) {
 		return
 	}
 
-	// Build debug string
-	debugInfo := fmt.Sprintf("TPS: %.1f | FPS: %.1f | Wheel: %.5f | Ball: %.5f | Updates: %d",
-		ebiten.ActualTPS(),
-		ebiten.ActualFPS(),
-		g.wheel.AngularSpeed,
-		g.ball.AngularSpeed,
-		g.updateCount,
-	)
+	// Line 1: Current TPS/FPS
+	line1 := fmt.Sprintf("TPS: %.1f (min:%.1f max:%.1f) | FPS: %.1f",
+		ebiten.ActualTPS(), g.minTPS, g.maxTPS, ebiten.ActualFPS())
 
-	// Draw background for readability
+	// Line 2: Speeds and phase
+	line2 := fmt.Sprintf("Wheel: %.5f | Ball: %.5f | Phase: %s | Updates: %d",
+		g.wheel.AngularSpeed, g.ball.AngularSpeed, g.getBallPhaseName(), g.updateCount)
+
+	// Line 3: Log status
+	line3 := fmt.Sprintf("Log entries: %d (saves on spin end when debug enabled)", len(g.debugLog))
+
 	op := &text.DrawOptions{}
 	op.GeoM.Translate(20, 50)
 	op.ColorScale.ScaleWithColor(color.RGBA{255, 255, 0, 255})
-	text.Draw(screen, debugInfo, face, op)
+	text.Draw(screen, line1, face, op)
+
+	op2 := &text.DrawOptions{}
+	op2.GeoM.Translate(20, 70)
+	op2.ColorScale.ScaleWithColor(color.RGBA{255, 255, 0, 255})
+	text.Draw(screen, line2, face, op2)
+
+	op3 := &text.DrawOptions{}
+	op3.GeoM.Translate(20, 90)
+	op3.ColorScale.ScaleWithColor(color.RGBA{200, 200, 0, 255})
+	text.Draw(screen, line3, face, op3)
+}
+
+// getBallPhaseName returns a human-readable name for the ball phase
+func (g *Game) getBallPhaseName() string {
+	switch g.ball.Phase {
+	case ball.PhaseIdle:
+		return "Idle"
+	case ball.PhaseOrbiting:
+		return "Orbiting"
+	case ball.PhaseDropping:
+		return "Dropping"
+	case ball.PhaseBouncing:
+		return "Bouncing"
+	case ball.PhaseSettled:
+		return "Settled"
+	default:
+		return "Unknown"
+	}
+}
+
+// writeDebugLog writes the collected debug log to a file
+func (g *Game) writeDebugLog() {
+	if len(g.debugLog) == 0 {
+		return
+	}
+
+	filename := fmt.Sprintf("debug_spin_%s.log", time.Now().Format("20060102_150405"))
+	f, err := os.Create(filename)
+	if err != nil {
+		log.Printf("Failed to create debug log: %v", err)
+		return
+	}
+	defer f.Close()
+
+	// Write header
+	fmt.Fprintf(f, "# Roulette Debug Log\n")
+	fmt.Fprintf(f, "# Generated: %s\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(f, "# TPS Range: %.1f - %.1f\n", g.minTPS, g.maxTPS)
+	fmt.Fprintf(f, "# Total Updates: %d\n", g.updateCount)
+	fmt.Fprintf(f, "#\n")
+	fmt.Fprintf(f, "TimeMs\tUpdate\tTPS\tFPS\tWheelSpeed\tBallSpeed\tBallPhase\tBallRadius\n")
+
+	// Write entries
+	for _, e := range g.debugLog {
+		fmt.Fprintf(f, "%d\t%d\t%.2f\t%.2f\t%.6f\t%.6f\t%s\t%.4f\n",
+			e.TimeMs, e.UpdateNum, e.TPS, e.FPS,
+			e.WheelSpeed, e.BallSpeed, e.BallPhase, e.BallRadius)
+	}
+
+	log.Printf("Debug log saved: %s (%d entries)", filename, len(g.debugLog))
 }
 
 // drawControls draws the control hints at the bottom of the screen
