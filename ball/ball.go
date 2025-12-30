@@ -18,7 +18,7 @@ const (
 	InitialOrbitRadius   = 0.95   // Ratio of wheel radius for starting orbit
 	FinalOrbitRadius     = 0.76   // Ratio where ball enters slots
 	InitialAngularSpeed  = 0.19   // Initial ball speed (radians per tick) - fast casino feel
-	FrictionCoefficient  = 0.0026 // How fast the ball slows down
+	FrictionCoefficient  = 0.0013 // How fast the ball slows down
 	DropThreshold        = 0.013  // Speed at which ball starts dropping
 	BounceDecay          = 0.6    // Energy retained after bounce
 	SettleThreshold      = 0.0004 // Speed at which ball settles
@@ -78,8 +78,9 @@ type Ball struct {
 	ShadowFadeAlpha  float64 // 0.0 = invisible, 1.0 = fully visible (for fade in/out)
 
 	// Timing
-	TicksSinceStart int
-	SpinDuration    int // Target spin duration in ticks (frames)
+	TicksSinceStart    int
+	SpinDuration       int     // Target spin duration in ticks (frames)
+	TotalAngleTraveled float64 // Total radians traveled during orbit
 
 	// Callbacks
 	OnTick   func() // Called when ball passes a slot boundary
@@ -113,6 +114,7 @@ func (b *Ball) StartSpin(wheelRotation float64) {
 	b.Phase = PhaseOrbiting
 	b.BounceCount = 0
 	b.TicksSinceStart = 0
+	b.TotalAngleTraveled = 0
 	b.MaxBounces = 5 + randomInt(5)
 	b.SettledSlot = -1 // Not settled yet
 
@@ -151,17 +153,25 @@ func (b *Ball) Update(wheelRotation, wheelAngularSpeed float64) {
 
 // updateOrbiting handles the ball spinning around the outer track
 func (b *Ball) updateOrbiting(wheelRotation float64) {
-	// Apply constant friction for smooth, even deceleration
-	friction := FrictionCoefficient
-	if b.AngularSpeed < 0 {
-		b.AngularSpeed += friction
-		if b.AngularSpeed > -DropThreshold {
-			b.AngularSpeed = -DropThreshold
-		}
-	} else {
-		b.AngularSpeed -= friction
-		if b.AngularSpeed < DropThreshold {
-			b.AngularSpeed = DropThreshold
+	// Track total distance traveled
+	b.TotalAngleTraveled += math.Abs(b.AngularSpeed)
+
+	// First 4 laps: constant speed, no friction
+	// After 4 laps: friction kicks in
+	requiredLaps := 4.0
+	if b.TotalAngleTraveled >= requiredLaps*2*math.Pi {
+		// Apply friction after 4 laps
+		friction := FrictionCoefficient
+		if b.AngularSpeed < 0 {
+			b.AngularSpeed += friction
+			if b.AngularSpeed > -DropThreshold {
+				b.AngularSpeed = -DropThreshold
+			}
+		} else {
+			b.AngularSpeed -= friction
+			if b.AngularSpeed < DropThreshold {
+				b.AngularSpeed = DropThreshold
+			}
 		}
 	}
 
@@ -186,9 +196,8 @@ func (b *Ball) updateOrbiting(wheelRotation float64) {
 		}
 	}
 
-	// Check if it's time to drop
-	progress := float64(b.TicksSinceStart) / float64(b.SpinDuration)
-	if progress > 0.5 && math.Abs(b.AngularSpeed) < DropThreshold*2 {
+	// Check if it's time to drop (only after 3 laps and speed is low enough)
+	if b.TotalAngleTraveled >= requiredLaps*2*math.Pi && math.Abs(b.AngularSpeed) < DropThreshold*2 {
 		b.Phase = PhaseDropping
 		b.RadialSpeed = -0.0002 // Gentle initial inward drift
 	}
