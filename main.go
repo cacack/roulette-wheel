@@ -29,9 +29,10 @@ const (
 	TargetFPS           = 60
 	StatsPanelWidth     = 300
 	HistoryPanelWidth   = 110  // Left side history panel
-	WheelSpinSpeed      = 0.085    // Fast initial spin for casino feel
-	WheelFriction       = 0.00014  // Normal friction while ball is spinning (proportional to speed increase)
-	WheelBrakeFriction  = 0.00034  // Higher friction after ball settles (~2 sec to stop)
+	// Physics constants tuned for 60 TPS fixed timestep
+	WheelSpinSpeed      = 0.036    // Fast initial spin for casino feel
+	WheelFriction       = 0.00006  // Normal friction while ball is spinning
+	WheelBrakeFriction  = 0.00015  // Higher friction after ball settles (~2 sec to stop)
 )
 
 // Animation constants
@@ -199,8 +200,8 @@ func (g *Game) Update() error {
 	// Update wheel rotation
 	g.updateWheel()
 
-	// Update ball physics with actual TPS for delta-time scaling
-	g.ball.Update(g.wheel.Rotation, g.wheel.AngularSpeed, ebiten.ActualTPS())
+	// Update ball physics (fixed timestep)
+	g.ball.Update(g.wheel.Rotation, g.wheel.AngularSpeed)
 
 	// Sync rolling audio with ball state
 	g.syncRollingAudio()
@@ -359,18 +360,10 @@ func (g *Game) resetGame() {
 	g.stats.Reset()
 }
 
-// updateWheel updates wheel rotation and applies friction with delta-time scaling
+// updateWheel updates wheel rotation and applies friction (fixed timestep)
 func (g *Game) updateWheel() {
 	if !g.isSpinning {
 		return
-	}
-
-	// Calculate delta-time scale factor (same as ball physics)
-	// ReferenceTPS = 25.6 (Mac's effective TPS where physics was tuned)
-	actualTPS := ebiten.ActualTPS()
-	dt := ball.ReferenceTPS / actualTPS
-	if actualTPS <= 0 || dt > 3.0 {
-		dt = 1.0 // Fallback for invalid TPS
 	}
 
 	// Apply friction to wheel (use brake friction after ball settles)
@@ -380,14 +373,13 @@ func (g *Game) updateWheel() {
 		if g.ballSettled {
 			friction = WheelBrakeFriction
 		}
-		// Scale friction by dt for consistent real-time behavior
-		currentSpeed -= friction * dt
+		currentSpeed -= friction
 		if currentSpeed < 0 {
 			currentSpeed = 0
 		}
 	}
 	g.wheel.SetSpeed(currentSpeed)
-	g.wheel.Update(dt)
+	g.wheel.Update()
 
 	// Check if wheel has stopped (speed is effectively zero)
 	wheelStopped := currentSpeed <= 0.0001
@@ -455,6 +447,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	// Draw wheel
 	g.wheel.Draw(screen)
+
+	// Draw ball shadow (during bouncing phase, under the ball)
+	g.ball.DrawShadow(screen)
 
 	// Draw ball
 	g.ball.Draw(screen)
@@ -735,6 +730,7 @@ func (g *Game) onResize() {
 	g.wheel.CenterX = wheelCenterX
 	g.wheel.CenterY = wheelCenterY
 	g.wheel.Radius = wheelRadius
+	g.wheel.InvalidateCache() // Force re-render of cached wheel
 
 	// Update ball
 	g.ball.UpdatePosition(wheelCenterX, wheelCenterY, wheelRadius)

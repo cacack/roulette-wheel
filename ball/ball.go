@@ -13,26 +13,23 @@ import (
 	"roulette-wheel/wheel"
 )
 
-// Ball physics constants
+// Ball physics constants (tuned for 60 TPS fixed timestep)
 const (
-	InitialOrbitRadius   = 0.95  // Ratio of wheel radius for starting orbit
-	FinalOrbitRadius     = 0.76  // Ratio where ball enters slots
-	InitialAngularSpeed  = 0.45  // Initial ball speed (radians per frame) - fast casino feel
-	FrictionCoefficient  = 0.006 // How fast the ball slows down (proportional to speed increase)
-	DropThreshold        = 0.03  // Speed at which ball starts dropping
-	BounceDecay          = 0.6   // Energy retained after bounce
-	SettleThreshold      = 0.001 // Speed at which ball settles
+	InitialOrbitRadius   = 0.95   // Ratio of wheel radius for starting orbit
+	FinalOrbitRadius     = 0.76   // Ratio where ball enters slots
+	InitialAngularSpeed  = 0.19   // Initial ball speed (radians per tick) - fast casino feel
+	FrictionCoefficient  = 0.0026 // How fast the ball slows down
+	DropThreshold        = 0.013  // Speed at which ball starts dropping
+	BounceDecay          = 0.6    // Energy retained after bounce
+	SettleThreshold      = 0.0004 // Speed at which ball settles
 	NumSlots             = 38
 	SlotAngle            = 2 * math.Pi / NumSlots
 
 	// Deflector collision constants
-	DeflectorAngleHitZone    = 0.12  // Angular hit zone (radians) - slightly larger than visual
-	DeflectorRadiusHitZone   = 0.04  // Radial hit zone - how close ball needs to be
-	DeflectorCooldownFrames  = 8     // Frames before same deflector can be hit again
-	DeflectorSpeedMultiplier = 0.9   // Base speed retention on deflector hit
-
-	// Delta-time reference: Mac runs at ~25.6 TPS where physics was tuned
-	ReferenceTPS = 25.6
+	DeflectorAngleHitZone    = 0.12 // Angular hit zone (radians) - slightly larger than visual
+	DeflectorRadiusHitZone   = 0.04 // Radial hit zone - how close ball needs to be
+	DeflectorCooldownFrames  = 8    // Frames before same deflector can be hit again
+	DeflectorSpeedMultiplier = 0.9  // Base speed retention on deflector hit
 )
 
 // Phase represents the current phase of ball motion
@@ -74,6 +71,11 @@ type Ball struct {
 
 	// Visual
 	Size float64
+
+	// Bounce shadow animation
+	BounceHeight     float64 // 0.0 = at surface (just bounced), 1.0 = at peak
+	BounceHeightVel  float64 // Velocity of bounce height animation
+	ShadowFadeAlpha  float64 // 0.0 = invisible, 1.0 = fully visible (for fade in/out)
 
 	// Timing
 	TicksSinceStart int
@@ -124,8 +126,8 @@ func (b *Ball) StartSpin(wheelRotation float64) {
 	b.SpinDuration = 330 + randomInt(60) // 330-390 frames (~5.5-6.5 seconds)
 }
 
-// Update updates the ball physics with delta-time scaling for consistent behavior across TPS
-func (b *Ball) Update(wheelRotation, wheelAngularSpeed, actualTPS float64) {
+// Update updates the ball physics (fixed timestep - no dt parameter)
+func (b *Ball) Update(wheelRotation, wheelAngularSpeed float64) {
 	if b.Phase == PhaseIdle || b.Phase == PhaseSettled {
 		if b.Phase == PhaseSettled && b.SettledSlot >= 0 {
 			// Keep ball locked to its slot as wheel spins
@@ -137,28 +139,20 @@ func (b *Ball) Update(wheelRotation, wheelAngularSpeed, actualTPS float64) {
 
 	b.TicksSinceStart++
 
-	// Calculate delta-time scale factor
-	// At ReferenceTPS (25.6), dt=1.0 (unchanged behavior)
-	// At higher TPS (60), dt<1.0 (less physics per frame)
-	dt := ReferenceTPS / actualTPS
-	if actualTPS <= 0 || dt > 3.0 {
-		dt = 1.0 // Fallback for invalid TPS or extremely low TPS
-	}
-
 	switch b.Phase {
 	case PhaseOrbiting:
-		b.updateOrbiting(wheelRotation, dt)
+		b.updateOrbiting(wheelRotation)
 	case PhaseDropping:
-		b.updateDropping(wheelRotation, dt)
+		b.updateDropping(wheelRotation)
 	case PhaseBouncing:
-		b.updateBouncing(wheelRotation, dt)
+		b.updateBouncing(wheelRotation)
 	}
 }
 
 // updateOrbiting handles the ball spinning around the outer track
-func (b *Ball) updateOrbiting(wheelRotation float64, dt float64) {
-	// Apply friction (scaled by dt)
-	friction := FrictionCoefficient * (1 + float64(b.TicksSinceStart)/float64(b.SpinDuration)) * dt
+func (b *Ball) updateOrbiting(wheelRotation float64) {
+	// Apply constant friction for smooth, even deceleration
+	friction := FrictionCoefficient
 	if b.AngularSpeed < 0 {
 		b.AngularSpeed += friction
 		if b.AngularSpeed > -DropThreshold {
@@ -171,9 +165,9 @@ func (b *Ball) updateOrbiting(wheelRotation float64, dt float64) {
 		}
 	}
 
-	// Update position (scaled by dt)
+	// Update position
 	oldAngle := b.Angle
-	b.Angle += b.AngularSpeed * dt
+	b.Angle += b.AngularSpeed
 
 	// Normalize angle
 	for b.Angle >= 2*math.Pi {
@@ -196,24 +190,24 @@ func (b *Ball) updateOrbiting(wheelRotation float64, dt float64) {
 	progress := float64(b.TicksSinceStart) / float64(b.SpinDuration)
 	if progress > 0.5 && math.Abs(b.AngularSpeed) < DropThreshold*2 {
 		b.Phase = PhaseDropping
-		b.RadialSpeed = -0.002
+		b.RadialSpeed = -0.0002 // Gentle initial inward drift
 	}
 }
 
 // updateDropping handles the ball falling toward the center
-func (b *Ball) updateDropping(wheelRotation float64, dt float64) {
-	// Decrement deflector cooldowns (scaled by dt)
+func (b *Ball) updateDropping(wheelRotation float64) {
+	// Decrement deflector cooldowns
 	for i := range b.DeflectorHitCooldowns {
 		if b.DeflectorHitCooldowns[i] > 0 {
 			b.DeflectorHitCooldowns[i]--
 		}
 	}
 
-	// Continue angular motion with more friction (use pow for multiplicative decay)
-	b.AngularSpeed *= math.Pow(0.995, dt)
+	// Continue angular motion with friction
+	b.AngularSpeed *= 0.998
 
-	// Update angle (scaled by dt)
-	b.Angle += b.AngularSpeed * dt
+	// Update angle
+	b.Angle += b.AngularSpeed
 	for b.Angle >= 2*math.Pi {
 		b.Angle -= 2 * math.Pi
 	}
@@ -221,9 +215,9 @@ func (b *Ball) updateDropping(wheelRotation float64, dt float64) {
 		b.Angle += 2 * math.Pi
 	}
 
-	// Accelerate inward (scaled by dt)
-	b.RadialSpeed -= 0.0003 * dt
-	b.Radius += b.RadialSpeed * dt
+	// Accelerate inward gradually (gravity-like curve)
+	b.RadialSpeed -= 0.00004
+	b.Radius += b.RadialSpeed
 
 	// Check for deflector collisions
 	b.checkDeflectorCollisions(wheelRotation)
@@ -234,6 +228,11 @@ func (b *Ball) updateDropping(wheelRotation float64, dt float64) {
 		b.Phase = PhaseBouncing
 		b.LastBouncePos = b.Angle
 
+		// Initialize bounce shadow - start at ground level (just impacted)
+		b.BounceHeight = 0.0
+		b.BounceHeightVel = 0.12 // First bounce is high and dramatic
+		b.ShadowFadeAlpha = 1.0  // Shadow fully visible immediately
+
 		if b.OnBounce != nil {
 			b.OnBounce()
 		}
@@ -241,17 +240,29 @@ func (b *Ball) updateDropping(wheelRotation float64, dt float64) {
 }
 
 // updateBouncing handles the ball bouncing between slots
-func (b *Ball) updateBouncing(wheelRotation float64, dt float64) {
-	// Reduce speed with each bounce (use pow for multiplicative decay)
-	b.AngularSpeed *= math.Pow(0.98, dt)
+func (b *Ball) updateBouncing(wheelRotation float64) {
+	// Reduce speed with friction
+	b.AngularSpeed *= 0.992
 
-	// Update angle (scaled by dt)
-	b.Angle += b.AngularSpeed * dt
+	// Update angle
+	b.Angle += b.AngularSpeed
 	for b.Angle >= 2*math.Pi {
 		b.Angle -= 2 * math.Pi
 	}
 	for b.Angle < 0 {
 		b.Angle += 2 * math.Pi
+	}
+
+	// Update bounce height animation (parabolic arc between bounces)
+	b.BounceHeight += b.BounceHeightVel
+	b.BounceHeightVel -= 0.005 // Gravity pulls height back down
+
+	// Clamp height to valid range
+	if b.BounceHeight < 0 {
+		b.BounceHeight = 0
+	}
+	if b.BounceHeight > 1 {
+		b.BounceHeight = 1
 	}
 
 	// Check if ball has moved enough to bounce
@@ -268,6 +279,16 @@ func (b *Ball) updateBouncing(wheelRotation float64, dt float64) {
 		// Reverse direction with some randomness
 		b.AngularSpeed = -b.AngularSpeed * BounceDecay * (0.8 + randomFloat()*0.4)
 
+		// Reset bounce height to ground level (ball just hit surface)
+		b.BounceHeight = 0.0
+		// Decreasing initial velocity with each bounce (losing energy)
+		// Steeper decay: bounces get noticeably smaller
+		energyFactor := 1.0 - float64(b.BounceCount)*0.15
+		if energyFactor < 0.2 {
+			energyFactor = 0.2
+		}
+		b.BounceHeightVel = 0.12 * energyFactor
+
 		if b.OnBounce != nil {
 			b.OnBounce()
 		}
@@ -282,6 +303,11 @@ func (b *Ball) updateBouncing(wheelRotation float64, dt float64) {
 // settle finalizes the ball in the nearest slot based on its current position
 func (b *Ball) settle(wheelRotation float64) {
 	b.Phase = PhaseSettled
+
+	// Reset shadow state when settling
+	b.BounceHeight = 0
+	b.BounceHeightVel = 0
+	b.ShadowFadeAlpha = 0 // Shadow disappears when settled
 
 	// Calculate which slot the ball is in based on its current angle relative to the wheel
 	// Normalize the ball's angle relative to wheel rotation
@@ -360,69 +386,106 @@ func (b *Ball) checkDeflectorCollisions(wheelRotation float64) {
 	}
 }
 
-// applyDeflectorRicochet applies chaotic ricochet physics when ball hits a deflector
+// applyDeflectorRicochet applies realistic ricochet physics when ball hits a deflector
 func (b *Ball) applyDeflectorRicochet(isVerticalDeflector bool) {
-	// Randomize the reflection behavior for chaos
-	// Base reflection: reverse or partially reverse angular velocity
-	reflectionType := randomInt(3)
-
-	switch reflectionType {
-	case 0:
-		// Full reversal with randomization
-		b.AngularSpeed = -b.AngularSpeed * (0.6 + randomFloat()*0.5)
-	case 1:
-		// Partial reversal - ball continues but slower and offset
-		b.AngularSpeed = b.AngularSpeed * (0.4 + randomFloat()*0.3)
-	case 2:
-		// Strong reversal - ball bounces back harder
-		b.AngularSpeed = -b.AngularSpeed * (0.8 + randomFloat()*0.4)
+	// Remember original direction (negative = counter-clockwise, positive = clockwise)
+	originalSign := 1.0
+	if b.AngularSpeed < 0 {
+		originalSign = -1.0
 	}
 
-	// Add random angular perturbation (±15-30 degrees worth)
-	perturbation := (randomFloat() - 0.5) * 0.5 // ±0.25 radians (~15 degrees)
-	b.AngularSpeed += perturbation * 0.1
+	// Deflector slows the ball (0.5-0.85 of original speed)
+	speedRetention := 0.5 + randomFloat()*0.35
+	b.AngularSpeed = math.Abs(b.AngularSpeed) * speedRetention
 
-	// Vertical deflectors (pointing radially) tend to bounce ball more sideways
-	// Horizontal deflectors (pointing tangentially) tend to redirect more
-	if isVerticalDeflector {
-		// More likely to reverse direction
-		if randomFloat() > 0.4 {
-			b.AngularSpeed = -math.Abs(b.AngularSpeed) * (0.5 + randomFloat()*0.5)
-			if randomFloat() > 0.5 {
-				b.AngularSpeed = -b.AngularSpeed
-			}
-		}
-	} else {
-		// Horizontal: can send ball in either direction
-		if randomFloat() > 0.5 {
-			b.AngularSpeed = -b.AngularSpeed
-		}
-	}
+	// Add small random perturbation (±5% of current speed)
+	perturbation := b.AngularSpeed * (randomFloat() - 0.5) * 0.1
+	b.AngularSpeed += perturbation
 
-	// Speed multiplier: ball can gain or lose energy (0.7-1.1x)
-	speedMult := DeflectorSpeedMultiplier + (randomFloat()-0.5)*0.4
-	b.AngularSpeed *= speedMult
+	// Restore original direction - ball continues same way, just slower
+	b.AngularSpeed *= originalSign
 
-	// Slightly affect radial speed - deflector can slow the drop or speed it up
-	radialPerturbation := (randomFloat() - 0.5) * 0.002
+	// Slightly affect radial speed - deflector can slow or speed up the drop
+	radialPerturbation := (randomFloat() - 0.5) * 0.0008
 	b.RadialSpeed += radialPerturbation
 
 	// Occasionally, a hard hit can push ball outward slightly
-	if randomFloat() > 0.8 {
-		b.RadialSpeed += 0.001 // Small outward push
+	if randomFloat() > 0.85 {
+		b.RadialSpeed += 0.0004
 	}
 
-	// Ensure ball doesn't get stuck - always maintain minimum inward motion
-	if b.RadialSpeed > -0.0005 {
-		b.RadialSpeed = -0.0005
+	// Ensure ball doesn't get stuck - maintain minimum inward motion
+	if b.RadialSpeed > -0.0003 {
+		b.RadialSpeed = -0.0003
 	}
 
-	// Ensure ball has some angular velocity to continue moving
-	if math.Abs(b.AngularSpeed) < 0.005 {
-		b.AngularSpeed = 0.01
-		if randomFloat() > 0.5 {
-			b.AngularSpeed = -b.AngularSpeed
-		}
+	// Ensure ball has minimum angular velocity
+	if math.Abs(b.AngularSpeed) < 0.003 {
+		b.AngularSpeed = 0.003 * originalSign
+	}
+}
+
+// DrawShadow renders a soft-edged shadow under the ball during bouncing
+// The shadow size and opacity are inversely correlated with bounce height:
+// - Ball at impact (low): shadow is small and dark
+// - Ball at peak (high): shadow is large and light
+func (b *Ball) DrawShadow(screen *ebiten.Image) {
+	// Only draw shadow during bouncing phase
+	if b.Phase != PhaseBouncing || b.ShadowFadeAlpha <= 0 {
+		return
+	}
+
+	x, y := b.GetPosition()
+
+	// Shadow position is offset down and right from ball (light source upper-left)
+	shadowOffsetX := b.Size * 0.3
+	shadowOffsetY := b.Size * 0.4
+
+	// Shadow size grows with height (ball appears higher = shadow spreads more)
+	// At height 0 (impact): shadow is 1.5x ball size (tight under ball)
+	// At height 1 (peak): shadow is 4x ball size (spread out)
+	baseShadowSize := b.Size * 1.5
+	maxShadowSize := b.Size * 4.0
+	shadowSize := baseShadowSize + (maxShadowSize-baseShadowSize)*b.BounceHeight
+
+	// Shadow opacity decreases with height (higher ball = lighter shadow)
+	// At height 0 (impact): opacity is 220 (very dark, clearly visible)
+	// At height 1 (peak): opacity is 80 (lighter but still visible)
+	baseOpacity := 220.0
+	minOpacity := 80.0
+	opacity := baseOpacity - (baseOpacity-minOpacity)*b.BounceHeight
+
+	// Apply fade alpha for smooth fade in/out
+	opacity *= b.ShadowFadeAlpha
+
+	// Draw soft-edged shadow using concentric ellipses with decreasing opacity
+	// This creates a gradient/blur effect
+	numLayers := 8
+	for i := numLayers - 1; i >= 0; i-- {
+		// Layer factor: 0.0 for innermost, 1.0 for outermost
+		layerFactor := float64(i) / float64(numLayers-1)
+
+		// Each layer is progressively larger
+		layerSize := shadowSize * (0.3 + layerFactor*0.7)
+
+		// Each layer is progressively more transparent (outer = more transparent)
+		layerOpacity := opacity * (1.0 - layerFactor*0.6)
+
+		// Make shadow slightly elliptical (wider than tall) for realism
+		ellipseWidth := float32(layerSize * 1.2)
+		ellipseHeight := float32(layerSize * 0.9)
+
+		// Draw ellipse using DrawFilledCircle with scale transform
+		// Since Ebitengine doesn't have native ellipse, we use a scaled circle approach
+		// For simplicity, draw as a circle (close enough for the effect)
+		shadowX := float32(x + shadowOffsetX)
+		shadowY := float32(y + shadowOffsetY)
+
+		// Use average of width/height for circle approximation
+		avgRadius := (ellipseWidth + ellipseHeight) / 2
+
+		shadowColor := color.RGBA{0, 0, 0, uint8(layerOpacity)}
+		vector.DrawFilledCircle(screen, shadowX, shadowY, avgRadius/2, shadowColor, false)
 	}
 }
 
@@ -447,6 +510,16 @@ func (b *Ball) Draw(screen *ebiten.Image) {
 // GetPosition returns the ball's current screen position
 func (b *Ball) GetPosition() (float64, float64) {
 	r := b.Radius * b.WheelRadius
+
+	// During bouncing, offset the ball outward at the apex of each bounce
+	// This creates the visual effect of the ball arcing outward as it bounces
+	if b.Phase == PhaseBouncing && b.BounceHeight > 0 {
+		// Outward offset peaks at bounce apex, scaled by ball size
+		// Use a curve that peaks in the middle of the bounce arc
+		outwardOffset := b.BounceHeight * b.Size * 1.5
+		r += outwardOffset
+	}
+
 	x := b.WheelCenterX + r*math.Cos(b.Angle)
 	y := b.WheelCenterY + r*math.Sin(b.Angle)
 	return x, y
@@ -487,6 +560,11 @@ func (b *Ball) Reset() {
 	b.RadialSpeed = 0
 	b.TicksSinceStart = 0
 	b.BounceCount = 0
+
+	// Reset shadow state
+	b.BounceHeight = 0
+	b.BounceHeightVel = 0
+	b.ShadowFadeAlpha = 0
 }
 
 // UpdatePosition updates the wheel center position (for window resize)

@@ -63,6 +63,10 @@ type Wheel struct {
 	TargetSlot    int     // The slot where the ball will land
 	InitialSpeed  float64 // Initial spinning speed
 	FontSource    *text.GoTextFaceSource // Font source for creating sized faces
+
+	// Cached rendering for performance
+	cachedImage  *ebiten.Image // Pre-rendered wheel at rotation=0
+	cachedRadius float64       // Radius when cache was created
 }
 
 // New creates a new wheel at the given position and size
@@ -74,11 +78,10 @@ func New(centerX, centerY, radius float64) *Wheel {
 	}
 }
 
-// Update updates the wheel state with delta-time scaling
-func (w *Wheel) Update(dt float64) {
+// Update updates the wheel state (fixed timestep - no dt parameter)
+func (w *Wheel) Update() {
 	if w.IsSpinning && w.AngularSpeed > 0 {
-		// Scale rotation by dt for consistent real-time behavior
-		w.Rotation += w.AngularSpeed * dt
+		w.Rotation += w.AngularSpeed
 		// Keep rotation in [0, 2*PI)
 		for w.Rotation >= 2*math.Pi {
 			w.Rotation -= 2 * math.Pi
@@ -121,30 +124,68 @@ func (w *Wheel) GetSlotPosition(slotIndex int, radiusRatio float64) (float64, fl
 	return x, y
 }
 
-// Draw renders the wheel
-func (w *Wheel) Draw(screen *ebiten.Image) {
-	// Draw ball track (outer wooden rim)
-	drawFilledCircle(screen, w.CenterX, w.CenterY, w.Radius*BallTrackOuterRatio, ColorWood)
-	drawFilledCircle(screen, w.CenterX, w.CenterY, w.Radius*BallTrackInnerRatio, ColorBallTrack)
+// ensureCache creates or updates the cached wheel image if needed
+func (w *Wheel) ensureCache() {
+	if w.cachedImage != nil && w.cachedRadius == w.Radius {
+		return // Cache is valid
+	}
 
-	// Draw deflectors (metal diamonds on the ball track)
-	w.drawDeflectors(screen)
+	// Create offscreen image large enough for the wheel
+	// Add padding for any anti-aliasing artifacts
+	size := int(w.Radius*2) + 20
+	w.cachedImage = ebiten.NewImage(size, size)
+	w.cachedRadius = w.Radius
+
+	// Draw wheel centered in the cache at rotation=0
+	cacheCenter := float64(size) / 2
+
+	// Draw ball track (outer wooden rim)
+	drawFilledCircle(w.cachedImage, cacheCenter, cacheCenter, w.Radius*BallTrackOuterRatio, ColorWood)
+	drawFilledCircle(w.cachedImage, cacheCenter, cacheCenter, w.Radius*BallTrackInnerRatio, ColorBallTrack)
+
+	// Draw deflectors (at rotation=0)
+	w.drawDeflectorsToCache(w.cachedImage, cacheCenter)
 
 	// Draw slot area background
-	drawFilledCircle(screen, w.CenterX, w.CenterY, w.Radius*SlotOuterRatio, ColorWoodDark)
+	drawFilledCircle(w.cachedImage, cacheCenter, cacheCenter, w.Radius*SlotOuterRatio, ColorWoodDark)
 
-	// Draw individual slots
-	w.drawSlots(screen)
+	// Draw individual slots (at rotation=0)
+	w.drawSlotsToCache(w.cachedImage, cacheCenter)
 
 	// Draw center cone/hub
-	w.drawCenter(screen)
+	w.drawCenterToCache(w.cachedImage, cacheCenter)
 
 	// Draw chrome ring separating slots from center
-	drawRing(screen, w.CenterX, w.CenterY, w.Radius*SlotInnerRatio, w.Radius*SlotInnerRatio-4, ColorChrome)
+	drawRing(w.cachedImage, cacheCenter, cacheCenter, w.Radius*SlotInnerRatio, w.Radius*SlotInnerRatio-4, ColorChrome)
 }
 
-// drawDeflectors draws the metal deflectors around the ball track
-func (w *Wheel) drawDeflectors(screen *ebiten.Image) {
+// InvalidateCache forces the wheel to be re-rendered (call after resize)
+func (w *Wheel) InvalidateCache() {
+	w.cachedImage = nil
+}
+
+// Draw renders the wheel using the cached image
+func (w *Wheel) Draw(screen *ebiten.Image) {
+	w.ensureCache()
+
+	// Calculate where to draw the cached image
+	cacheSize := float64(w.cachedImage.Bounds().Dx())
+	cacheCenter := cacheSize / 2
+
+	// Draw cached wheel with rotation
+	op := &ebiten.DrawImageOptions{}
+	// Translate so rotation center is at origin
+	op.GeoM.Translate(-cacheCenter, -cacheCenter)
+	// Apply rotation
+	op.GeoM.Rotate(w.Rotation)
+	// Translate to screen position
+	op.GeoM.Translate(w.CenterX, w.CenterY)
+
+	screen.DrawImage(w.cachedImage, op)
+}
+
+// drawDeflectorsToCache draws deflectors to the cached image at rotation=0
+func (w *Wheel) drawDeflectorsToCache(img *ebiten.Image, center float64) {
 	deflectorAngle := 2 * math.Pi / float64(NumDeflectors)
 	deflectorRadius := w.Radius * DeflectorRadiusRatio
 
@@ -154,9 +195,9 @@ func (w *Wheel) drawDeflectors(screen *ebiten.Image) {
 	chromeShadow := color.RGBA{100, 100, 110, 255}
 
 	for i := 0; i < NumDeflectors; i++ {
-		angle := float64(i)*deflectorAngle + w.Rotation
-		x := w.CenterX + deflectorRadius*math.Cos(angle)
-		y := w.CenterY + deflectorRadius*math.Sin(angle)
+		angle := float64(i) * deflectorAngle // No w.Rotation - cache is at rotation=0
+		x := center + deflectorRadius*math.Cos(angle)
+		y := center + deflectorRadius*math.Sin(angle)
 
 		// Larger diamond size - approximately 2x ball diameter
 		size := w.Radius * 0.045
@@ -168,21 +209,21 @@ func (w *Wheel) drawDeflectors(screen *ebiten.Image) {
 		}
 
 		// Draw shadow first (offset slightly)
-		drawDiamond(screen, x+2, y+2, size, diamondAngle, chromeShadow)
+		drawDiamond(img, x+2, y+2, size, diamondAngle, chromeShadow)
 		// Draw main diamond body
-		drawDiamond(screen, x, y, size, diamondAngle, chromeBase)
+		drawDiamond(img, x, y, size, diamondAngle, chromeBase)
 		// Draw smaller highlight diamond for 3D effect
-		drawDiamond(screen, x-size*0.15, y-size*0.15, size*0.5, diamondAngle, chromeHighlight)
+		drawDiamond(img, x-size*0.15, y-size*0.15, size*0.5, diamondAngle, chromeHighlight)
 	}
 }
 
-// drawSlots draws all 38 numbered slots
-func (w *Wheel) drawSlots(screen *ebiten.Image) {
+// drawSlotsToCache draws all 38 numbered slots to the cached image at rotation=0
+func (w *Wheel) drawSlotsToCache(img *ebiten.Image, center float64) {
 	outerR := w.Radius * SlotOuterRatio
 	innerR := w.Radius * SlotInnerRatio
 
 	for i, numStr := range NumberSequence {
-		startAngle := float64(i)*SlotAngle + w.Rotation - SlotAngle/2
+		startAngle := float64(i)*SlotAngle - SlotAngle/2 // No w.Rotation
 		endAngle := startAngle + SlotAngle
 
 		// Determine slot color
@@ -196,33 +237,33 @@ func (w *Wheel) drawSlots(screen *ebiten.Image) {
 		}
 
 		// Draw slot wedge
-		drawWedge(screen, w.CenterX, w.CenterY, innerR, outerR, startAngle, endAngle, slotColor)
+		drawWedge(img, center, center, innerR, outerR, startAngle, endAngle, slotColor)
 
 		// Draw slot dividers
-		dividerAngle := float64(i)*SlotAngle + w.Rotation + SlotAngle/2
-		x1 := w.CenterX + innerR*math.Cos(dividerAngle)
-		y1 := w.CenterY + innerR*math.Sin(dividerAngle)
-		x2 := w.CenterX + outerR*math.Cos(dividerAngle)
-		y2 := w.CenterY + outerR*math.Sin(dividerAngle)
-		vector.StrokeLine(screen, float32(x1), float32(y1), float32(x2), float32(y2), 2, ColorChrome, false)
+		dividerAngle := float64(i)*SlotAngle + SlotAngle/2 // No w.Rotation
+		x1 := center + innerR*math.Cos(dividerAngle)
+		y1 := center + innerR*math.Sin(dividerAngle)
+		x2 := center + outerR*math.Cos(dividerAngle)
+		y2 := center + outerR*math.Sin(dividerAngle)
+		vector.StrokeLine(img, float32(x1), float32(y1), float32(x2), float32(y2), 2, ColorChrome, false)
 
 		// Draw number
-		w.drawNumber(screen, i, numStr)
+		w.drawNumberToCache(img, center, i, numStr)
 	}
 }
 
-// drawNumber draws a number on a slot
-func (w *Wheel) drawNumber(screen *ebiten.Image, slotIndex int, numStr string) {
+// drawNumberToCache draws a number on a slot to the cached image at rotation=0
+func (w *Wheel) drawNumberToCache(img *ebiten.Image, center float64, slotIndex int, numStr string) {
 	if w.FontSource == nil {
 		return
 	}
 
 	// Position at middle of slot
 	midRadius := w.Radius * (SlotOuterRatio + SlotInnerRatio) / 2
-	angle := float64(slotIndex)*SlotAngle + w.Rotation
+	angle := float64(slotIndex) * SlotAngle // No w.Rotation
 
-	x := w.CenterX + midRadius*math.Cos(angle)
-	y := w.CenterY + midRadius*math.Sin(angle)
+	x := center + midRadius*math.Cos(angle)
+	y := center + midRadius*math.Sin(angle)
 
 	// Calculate font size based on wheel radius (scale with wheel size)
 	// Use a size that fits well in the slot width
@@ -250,43 +291,41 @@ func (w *Wheel) drawNumber(screen *ebiten.Image, slotIndex int, numStr string) {
 	shadowOp.GeoM.Rotate(angle + math.Pi/2) // Rotate to align with slot
 	shadowOp.GeoM.Translate(x, y)
 	shadowOp.ColorScale.ScaleWithColor(color.RGBA{0, 0, 0, 120})
-	text.Draw(screen, numStr, face, shadowOp)
+	text.Draw(img, numStr, face, shadowOp)
 
 	// Draw the number with rotation so it aligns radially
 	op := &text.DrawOptions{}
-	// First translate to center of text, rotate, then translate to position
-	// The text should be rotated so it points outward from the center
 	op.GeoM.Translate(-textWidth/2, -textHeight/2)
 	op.GeoM.Rotate(angle + math.Pi/2) // Rotate to align with slot (add 90 degrees so text reads outward)
 	op.GeoM.Translate(x, y)
 
 	op.ColorScale.ScaleWithColor(color.White)
-	text.Draw(screen, numStr, face, op)
+	text.Draw(img, numStr, face, op)
 }
 
-// drawCenter draws the center hub of the wheel
-func (w *Wheel) drawCenter(screen *ebiten.Image) {
+// drawCenterToCache draws the center hub to the cached image
+func (w *Wheel) drawCenterToCache(img *ebiten.Image, center float64) {
 	centerR := w.Radius * CenterRatio
 
 	// Outer gold ring
-	drawFilledCircle(screen, w.CenterX, w.CenterY, centerR, ColorGold)
+	drawFilledCircle(img, center, center, centerR, ColorGold)
 
 	// Inner decorative area
-	drawFilledCircle(screen, w.CenterX, w.CenterY, centerR*0.8, ColorWoodDark)
+	drawFilledCircle(img, center, center, centerR*0.8, ColorWoodDark)
 
 	// Center jewel/boss
-	drawFilledCircle(screen, w.CenterX, w.CenterY, centerR*0.3, ColorChrome)
-	drawFilledCircle(screen, w.CenterX, w.CenterY, centerR*0.2, ColorGold)
+	drawFilledCircle(img, center, center, centerR*0.3, ColorChrome)
+	drawFilledCircle(img, center, center, centerR*0.2, ColorGold)
 
 	// Decorative spokes
 	numSpokes := 8
 	for i := 0; i < numSpokes; i++ {
 		angle := float64(i) * math.Pi / 4
-		x1 := w.CenterX + centerR*0.35*math.Cos(angle)
-		y1 := w.CenterY + centerR*0.35*math.Sin(angle)
-		x2 := w.CenterX + centerR*0.75*math.Cos(angle)
-		y2 := w.CenterY + centerR*0.75*math.Sin(angle)
-		vector.StrokeLine(screen, float32(x1), float32(y1), float32(x2), float32(y2), 3, ColorGold, false)
+		x1 := center + centerR*0.35*math.Cos(angle)
+		y1 := center + centerR*0.35*math.Sin(angle)
+		x2 := center + centerR*0.75*math.Cos(angle)
+		y2 := center + centerR*0.75*math.Sin(angle)
+		vector.StrokeLine(img, float32(x1), float32(y1), float32(x2), float32(y2), 3, ColorGold, false)
 	}
 }
 
