@@ -199,8 +199,8 @@ func (g *Game) Update() error {
 	// Update wheel rotation
 	g.updateWheel()
 
-	// Update ball physics
-	g.ball.Update(g.wheel.Rotation, g.wheel.AngularSpeed)
+	// Update ball physics with actual TPS for delta-time scaling
+	g.ball.Update(g.wheel.Rotation, g.wheel.AngularSpeed, ebiten.ActualTPS())
 
 	// Sync rolling audio with ball state
 	g.syncRollingAudio()
@@ -359,10 +359,18 @@ func (g *Game) resetGame() {
 	g.stats.Reset()
 }
 
-// updateWheel updates wheel rotation and applies friction
+// updateWheel updates wheel rotation and applies friction with delta-time scaling
 func (g *Game) updateWheel() {
 	if !g.isSpinning {
 		return
+	}
+
+	// Calculate delta-time scale factor (same as ball physics)
+	// ReferenceTPS = 25.6 (Mac's effective TPS where physics was tuned)
+	actualTPS := ebiten.ActualTPS()
+	dt := ball.ReferenceTPS / actualTPS
+	if actualTPS <= 0 || dt > 3.0 {
+		dt = 1.0 // Fallback for invalid TPS
 	}
 
 	// Apply friction to wheel (use brake friction after ball settles)
@@ -372,13 +380,14 @@ func (g *Game) updateWheel() {
 		if g.ballSettled {
 			friction = WheelBrakeFriction
 		}
-		currentSpeed -= friction
+		// Scale friction by dt for consistent real-time behavior
+		currentSpeed -= friction * dt
 		if currentSpeed < 0 {
 			currentSpeed = 0
 		}
 	}
 	g.wheel.SetSpeed(currentSpeed)
-	g.wheel.Update()
+	g.wheel.Update(dt)
 
 	// Check if wheel has stopped (speed is effectively zero)
 	wheelStopped := currentSpeed <= 0.0001

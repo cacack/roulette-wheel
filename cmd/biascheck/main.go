@@ -23,10 +23,11 @@ func runBiasTest(numSpins int) {
 		b.StartSpin(wheelRotation)
 
 		// Run physics until settled (no real-time delay)
+		// Use ReferenceTPS for consistent simulation behavior
 		maxIterations := 10000 // Safety limit
 		for iter := 0; iter < maxIterations && !b.IsSettled(); iter++ {
 			wheelRotation += wheelSpeed
-			b.Update(wheelRotation, wheelSpeed)
+			b.Update(wheelRotation, wheelSpeed, ball.ReferenceTPS)
 		}
 
 		if b.IsSettled() {

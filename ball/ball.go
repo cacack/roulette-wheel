@@ -30,6 +30,9 @@ const (
 	DeflectorRadiusHitZone   = 0.04  // Radial hit zone - how close ball needs to be
 	DeflectorCooldownFrames  = 8     // Frames before same deflector can be hit again
 	DeflectorSpeedMultiplier = 0.9   // Base speed retention on deflector hit
+
+	// Delta-time reference: Mac runs at ~25.6 TPS where physics was tuned
+	ReferenceTPS = 25.6
 )
 
 // Phase represents the current phase of ball motion
@@ -121,8 +124,8 @@ func (b *Ball) StartSpin(wheelRotation float64) {
 	b.SpinDuration = 330 + randomInt(60) // 330-390 frames (~5.5-6.5 seconds)
 }
 
-// Update updates the ball physics
-func (b *Ball) Update(wheelRotation, wheelAngularSpeed float64) {
+// Update updates the ball physics with delta-time scaling for consistent behavior across TPS
+func (b *Ball) Update(wheelRotation, wheelAngularSpeed, actualTPS float64) {
 	if b.Phase == PhaseIdle || b.Phase == PhaseSettled {
 		if b.Phase == PhaseSettled && b.SettledSlot >= 0 {
 			// Keep ball locked to its slot as wheel spins
@@ -134,20 +137,28 @@ func (b *Ball) Update(wheelRotation, wheelAngularSpeed float64) {
 
 	b.TicksSinceStart++
 
+	// Calculate delta-time scale factor
+	// At ReferenceTPS (25.6), dt=1.0 (unchanged behavior)
+	// At higher TPS (60), dt<1.0 (less physics per frame)
+	dt := ReferenceTPS / actualTPS
+	if actualTPS <= 0 || dt > 3.0 {
+		dt = 1.0 // Fallback for invalid TPS or extremely low TPS
+	}
+
 	switch b.Phase {
 	case PhaseOrbiting:
-		b.updateOrbiting(wheelRotation)
+		b.updateOrbiting(wheelRotation, dt)
 	case PhaseDropping:
-		b.updateDropping(wheelRotation)
+		b.updateDropping(wheelRotation, dt)
 	case PhaseBouncing:
-		b.updateBouncing(wheelRotation)
+		b.updateBouncing(wheelRotation, dt)
 	}
 }
 
 // updateOrbiting handles the ball spinning around the outer track
-func (b *Ball) updateOrbiting(wheelRotation float64) {
-	// Apply friction
-	friction := FrictionCoefficient * (1 + float64(b.TicksSinceStart)/float64(b.SpinDuration))
+func (b *Ball) updateOrbiting(wheelRotation float64, dt float64) {
+	// Apply friction (scaled by dt)
+	friction := FrictionCoefficient * (1 + float64(b.TicksSinceStart)/float64(b.SpinDuration)) * dt
 	if b.AngularSpeed < 0 {
 		b.AngularSpeed += friction
 		if b.AngularSpeed > -DropThreshold {
@@ -160,9 +171,9 @@ func (b *Ball) updateOrbiting(wheelRotation float64) {
 		}
 	}
 
-	// Update position
+	// Update position (scaled by dt)
 	oldAngle := b.Angle
-	b.Angle += b.AngularSpeed
+	b.Angle += b.AngularSpeed * dt
 
 	// Normalize angle
 	for b.Angle >= 2*math.Pi {
@@ -190,19 +201,19 @@ func (b *Ball) updateOrbiting(wheelRotation float64) {
 }
 
 // updateDropping handles the ball falling toward the center
-func (b *Ball) updateDropping(wheelRotation float64) {
-	// Decrement deflector cooldowns
+func (b *Ball) updateDropping(wheelRotation float64, dt float64) {
+	// Decrement deflector cooldowns (scaled by dt)
 	for i := range b.DeflectorHitCooldowns {
 		if b.DeflectorHitCooldowns[i] > 0 {
 			b.DeflectorHitCooldowns[i]--
 		}
 	}
 
-	// Continue angular motion with more friction
-	b.AngularSpeed *= 0.995
+	// Continue angular motion with more friction (use pow for multiplicative decay)
+	b.AngularSpeed *= math.Pow(0.995, dt)
 
-	// Update angle
-	b.Angle += b.AngularSpeed
+	// Update angle (scaled by dt)
+	b.Angle += b.AngularSpeed * dt
 	for b.Angle >= 2*math.Pi {
 		b.Angle -= 2 * math.Pi
 	}
@@ -210,9 +221,9 @@ func (b *Ball) updateDropping(wheelRotation float64) {
 		b.Angle += 2 * math.Pi
 	}
 
-	// Accelerate inward
-	b.RadialSpeed -= 0.0003
-	b.Radius += b.RadialSpeed
+	// Accelerate inward (scaled by dt)
+	b.RadialSpeed -= 0.0003 * dt
+	b.Radius += b.RadialSpeed * dt
 
 	// Check for deflector collisions
 	b.checkDeflectorCollisions(wheelRotation)
@@ -230,12 +241,12 @@ func (b *Ball) updateDropping(wheelRotation float64) {
 }
 
 // updateBouncing handles the ball bouncing between slots
-func (b *Ball) updateBouncing(wheelRotation float64) {
-	// Reduce speed with each bounce
-	b.AngularSpeed *= 0.98
+func (b *Ball) updateBouncing(wheelRotation float64, dt float64) {
+	// Reduce speed with each bounce (use pow for multiplicative decay)
+	b.AngularSpeed *= math.Pow(0.98, dt)
 
-	// Update angle
-	b.Angle += b.AngularSpeed
+	// Update angle (scaled by dt)
+	b.Angle += b.AngularSpeed * dt
 	for b.Angle >= 2*math.Pi {
 		b.Angle -= 2 * math.Pi
 	}

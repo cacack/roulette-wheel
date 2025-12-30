@@ -74,10 +74,11 @@ func New(centerX, centerY, radius float64) *Wheel {
 	}
 }
 
-// Update updates the wheel state
-func (w *Wheel) Update() {
+// Update updates the wheel state with delta-time scaling
+func (w *Wheel) Update(dt float64) {
 	if w.IsSpinning && w.AngularSpeed > 0 {
-		w.Rotation += w.AngularSpeed
+		// Scale rotation by dt for consistent real-time behavior
+		w.Rotation += w.AngularSpeed * dt
 		// Keep rotation in [0, 2*PI)
 		for w.Rotation >= 2*math.Pi {
 			w.Rotation -= 2 * math.Pi
