@@ -16,14 +16,17 @@ jobs:
             goos: darwin
             goarch: arm64
             binary: roulette-wheel-darwin-arm64
+            test_flags: -short
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
             binary: roulette-wheel-linux-amd64
+            test_flags: ''
           - os: windows-latest
             goos: windows
             goarch: amd64
             binary: roulette-wheel-windows-amd64.exe
+            test_flags: -short
 
     runs-on: ${{ matrix.os }}
 
@@ -43,6 +46,11 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      # The statistical fairness test runs on one platform only; it has a
+      # ~0.1% false-failure rate per run by design (p<0.001 threshold)
+      - name: Test
+        run: go test ${{ matrix.test_flags }} ./...
 
       - name: Vulnerability check
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

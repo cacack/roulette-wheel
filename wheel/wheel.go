@@ -100,6 +100,13 @@ const (
 	SlotAngle           = 2 * math.Pi / NumSlots
 )
 
+// Spin physics constants tuned for 60 TPS fixed timestep
+const (
+	SpinSpeed     = 0.036   // Fast initial spin for casino feel
+	Friction      = 0.00006 // Normal friction while ball is spinning
+	BrakeFriction = 0.00015 // Higher friction after ball settles (~2 sec to stop)
+)
+
 // Wheel represents the roulette wheel state
 type Wheel struct {
 	CenterX       float64
@@ -147,9 +154,24 @@ func (w *Wheel) StartSpin(initialSpeed float64) {
 	w.AngularSpeed = initialSpeed
 }
 
+// InitialSpeed returns a spin speed varied ±20% around SpinSpeed, where r is
+// a random value in [0, 1]
+func InitialSpeed(r float64) float64 {
+	return SpinSpeed * (0.8 + r*0.4)
+}
+
 // SetSpeed sets the current angular speed
 func (w *Wheel) SetSpeed(speed float64) {
 	w.AngularSpeed = speed
+}
+
+// Tick applies friction to the angular speed (never below zero), then
+// advances the rotation by one fixed timestep
+func (w *Wheel) Tick(friction float64) {
+	if w.AngularSpeed > 0 {
+		w.AngularSpeed = math.Max(0, w.AngularSpeed-friction)
+	}
+	w.Update()
 }
 
 // Stop stops the wheel

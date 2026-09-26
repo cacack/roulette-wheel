@@ -29,10 +29,6 @@ const (
 	TargetFPS           = 60
 	StatsPanelWidth     = 300
 	HistoryPanelWidth   = 110  // Left side history panel
-	// Physics constants tuned for 60 TPS fixed timestep
-	WheelSpinSpeed      = 0.036    // Fast initial spin for casino feel
-	WheelFriction       = 0.00006  // Normal friction while ball is spinning
-	WheelBrakeFriction  = 0.00015  // Higher friction after ball settles (~2 sec to stop)
 )
 
 // Animation constants
@@ -329,7 +325,7 @@ func (g *Game) startSpin() {
 	g.animWinningNum = ""
 
 	// Start wheel spinning
-	g.wheelInitialSpeed = WheelSpinSpeed * (0.8 + float64(randomByte())/255.0*0.4)
+	g.wheelInitialSpeed = wheel.InitialSpeed(float64(randomByte()) / 255.0)
 	g.wheel.StartSpin(g.wheelInitialSpeed)
 
 	// Start ball spinning (opposite direction)
@@ -367,19 +363,12 @@ func (g *Game) updateWheel() {
 	}
 
 	// Apply friction to wheel (use brake friction after ball settles)
-	currentSpeed := g.wheel.AngularSpeed
-	if currentSpeed > 0 {
-		friction := WheelFriction
-		if g.ballSettled {
-			friction = WheelBrakeFriction
-		}
-		currentSpeed -= friction
-		if currentSpeed < 0 {
-			currentSpeed = 0
-		}
+	friction := wheel.Friction
+	if g.ballSettled {
+		friction = wheel.BrakeFriction
 	}
-	g.wheel.SetSpeed(currentSpeed)
-	g.wheel.Update()
+	g.wheel.Tick(friction)
+	currentSpeed := g.wheel.AngularSpeed
 
 	// Check if wheel has stopped (speed is effectively zero)
 	wheelStopped := currentSpeed <= 0.0001
