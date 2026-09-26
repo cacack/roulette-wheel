@@ -1,4 +1,4 @@
-.PHONY: build clean run
+.PHONY: build clean run test test-short
 
 BINARY_NAME=roulette-wheel
 DIST_DIR=dist
@@ -13,3 +13,11 @@ clean:
 
 run:
 	go run .
+
+# Run all tests, including the statistical fairness simulation
+test:
+	go test ./...
+
+# Run tests without the statistical fairness simulation
+test-short:
+	go test -short ./...

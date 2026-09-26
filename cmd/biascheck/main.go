@@ -1,47 +1,33 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 
 	"roulette-wheel/ball"
 	"roulette-wheel/wheel"
 )
 
-func runBiasTest(numSpins int) {
-	// Track results
-	slotCounts := make(map[int]int)
-	numberCounts := make(map[string]int)
+// runBiasTest simulates numSpins and prints a report; it returns an error if
+// any spin failed to settle or the distribution shows bias at p < 0.001.
+func runBiasTest(numSpins int) error {
+	slotCounts := ball.SimulateSpins(numSpins)
 
-	// Simulate wheel state
-	wheelRotation := 0.0
-	wheelSpeed := 0.02
-
-	for i := 0; i < numSpins; i++ {
-		// Create a fresh ball for each spin
-		b := ball.New(400, 300, 200)
-		b.StartSpin(wheelRotation)
-
-		// Run physics until settled (no real-time delay)
-		maxIterations := 10000 // Safety limit
-		for iter := 0; iter < maxIterations && !b.IsSettled(); iter++ {
-			wheelRotation += wheelSpeed
-			b.Update(wheelRotation, wheelSpeed)
-		}
-
-		if b.IsSettled() {
-			slot := b.GetSettledSlot()
-			slotCounts[slot]++
-			num := b.GetWinningNumber(wheel.NumberSequence)
-			numberCounts[num]++
-		}
+	settled := 0
+	for _, count := range slotCounts {
+		settled += count
+	}
+	if settled == 0 {
+		return errors.New("no spins settled")
 	}
 
 	// Print results
-	fmt.Printf("\n=== Bias Test Results (%d spins) ===\n\n", numSpins)
+	fmt.Printf("\n=== Bias Test Results (%d of %d spins settled) ===\n\n", settled, numSpins)
 
 	// Expected count per slot
-	expected := float64(numSpins) / 38.0
+	expected := float64(settled) / ball.NumSlots
 	fmt.Printf("Expected hits per number: %.1f\n\n", expected)
 
 	// Sort numbers for display
@@ -50,8 +36,11 @@ func runBiasTest(numSpins int) {
 		count int
 	}
 	var results []result
-	for num, count := range numberCounts {
+	numberCounts := make(map[string]int)
+	for slot, count := range slotCounts {
+		num := wheel.NumberSequence[slot]
 		results = append(results, result{num, count})
+		numberCounts[num] = count
 	}
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].count > results[j].count
@@ -75,20 +64,29 @@ func runBiasTest(numSpins int) {
 	}
 
 	// Chi-square test
-	chiSquare := 0.0
-	for _, count := range slotCounts {
-		diff := float64(count) - expected
-		chiSquare += (diff * diff) / expected
-	}
+	chiSquare := ball.ChiSquare(slotCounts)
 	fmt.Printf("\nChi-square statistic: %.2f\n", chiSquare)
-	fmt.Printf("(For 37 df, values > 52.2 indicate bias at p<0.05)\n")
+	fmt.Printf("(For 37 df, values > %.2f indicate bias at p<0.001)\n", ball.ChiSquareCritical001)
 
 	// Check specifically for 0 and 00
 	fmt.Printf("\nGreen zeros:\n")
 	fmt.Printf("  0:  %d hits (expected %.1f)\n", numberCounts["0"], expected)
 	fmt.Printf("  00: %d hits (expected %.1f)\n", numberCounts["00"], expected)
+
+	if settled != numSpins {
+		return fmt.Errorf("%d of %d spins failed to settle", numSpins-settled, numSpins)
+	}
+	if !ball.IsFair(slotCounts) {
+		return errors.New("distribution is biased at p<0.001")
+	}
+	return nil
 }
 
+// main exits non-zero when the bias test fails, so it can gate scripts or CI.
 func main() {
-	runBiasTest(10000)
+	if err := runBiasTest(50000); err != nil {
+		fmt.Printf("\nFAIL: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("\nPASS: no bias detected at p<0.001")
 }
