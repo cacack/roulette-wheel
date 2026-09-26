@@ -1,0 +1,42 @@
+# Architect Review — 2026-09-26
+
+**Verdict:** needs-attention
+
+This is a small (3,789 LOC), single-binary Ebitengine game with a clean, acyclic package graph (`main` depends on `audio`, `ball`, `fonts`, `stats`, `wheel`; `ball` depends on `wheel` for deflector geometry; `stats` depends on `fonts`) — there are no circular imports and no directory-only boundaries where "everything imports everything." The real structural risk isn't coupling between packages, it's duplicated domain knowledge that has silently leaked across those same boundaries, plus two files (`main.go`, `wheel/wheel.go`) that are accumulating unrelated concerns as the project's stated growth direction (visual fidelity, diagnostics) continues. Nothing here is broken today; the concerns are about compounding cost as the codebase 5x's in rendering detail or feature count.
+
+## Findings
+
+**[HIGH] Roulette number classification (red/black/green, parity, high/low) is independently reimplemented three times**
+- Evidence: `wheel/wheel.go` exports `RedNumbers`, `GetNumberColor()`, `IsRed()`, `IsEven()`, `IsLow()` (lines 22, 1318-1354) as the apparent authoritative source. Yet `main.go` redefines its own `redNumbers` map and `getNumberColor()` (lines 420-434) instead of calling `wheel.GetNumberColor`/`wheel.IsRed`, and `stats/stats.go` redefines a third copy of the red-numbers set (line 46), its own color constants (lines 54-64), its own `getNumberColor()` (line 460), and inlines parity/high-low logic (lines 108-117) that duplicates `wheel.IsEven`/`wheel.IsLow` rather than calling them.
+- Why it matters: three copies of the same fact currently agree by coincidence, not by construction. There is no compiler or test signal that would catch drift if one copy is edited (e.g., a wheel-layout or palette change in `wheel.go` during the ongoing "casino-realistic rendering" work) — a maintainer would have to remember to update three files in three packages. This is exactly the kind of divergence that produces a wheel that visually disagrees with its own statistics panel.
+- Suggested action: have `main.go` and `stats/stats.go` call `wheel.GetNumberColor`, `wheel.IsRed`, `wheel.IsEven`, and `wheel.IsLow` instead of maintaining local copies; delete the two duplicate maps/functions. No new abstraction needed — the single source of truth already exists and is exported.
+
+**[HIGH] No automated regression path for the one correctness property that matters most (wheel fairness)**
+- Evidence: snapshot confirms 0 `*_test.go` files repo-wide. `cmd/biascheck/main.go` exists specifically to run 10,000 simulated spins and chi-square the results for bias, but `.github/workflows/build.yml` only runs `go vet` and `govulncheck` before building — `biascheck` is never invoked in CI, and there is no `go test` step at all.
+- Why it matters: this is an app whose core promise is a fair, unbiased wheel for a casino-night audience. The tool that verifies that property already exists but is disconnected from the build — a physics change (e.g., the recent `fix(physics): add delta-time scaling`, `feat(ball): add lap-based orbiting` commits) could silently introduce bias and nothing would flag it short of a human manually running `go run ./cmd/biascheck` and reading the output. At 5x feature growth (more physics tweaks, more deflector geometry) this gap only gets more expensive to close retroactively.
+- Suggested action: add a CI step (or a `go test` wrapping `runBiasTest` with an assertion on the chi-square threshold already documented in the tool's own output: ">52.2 indicates bias at p<0.05") so a bias regression fails the build instead of requiring manual inspection.
+
+**[MEDIUM] `wheel/wheel.go` conflates the wheel's domain model/physics with ~40 low-level rendering primitives in one 1,355-line file**
+- Evidence: `grep '^func'` on the file shows only ~7 functions concerned with wheel state (`New`, `Update`, `StartSpin`, `SetSpeed`, `Stop`, `GetSlotAngle`, `GetSlotPosition`); the remaining ~40 are rendering helpers with no dependency on `Wheel` state at all (`drawPolishedChromeDiamond`, `drawWoodGrain`, `drawLacquerHighlight`, `drawSmoothChromeRing`, `drawBrushedMetalRing`, `drawMetalSpecular`, `getMetalGradientColor`, etc., lines 296-1286). It is already the largest file in the repo by a wide margin (1,355 LOC vs. next-largest `main.go` at 773).
+- Why it matters: this file is the direct target of the project's own stated growth vector — recent commits (`feat(graphics): add casino-realistic wheel rendering`) added visual fidelity, and more of that work will land here. Mixing "wheel physics/state" with "procedural chrome/wood-grain rendering" in one file means every rendering tweak requires navigating physics code and vice versa, and there's no seam to swap or unit-test the rendering separately from the model.
+- Suggested action: split the file along the natural line already visible in the function list — move the rendering-only helpers (everything from `drawPolishedChromeDiamond` onward that doesn't touch `*Wheel` state) into `wheel/render.go` in the same package. No new package or API surface required, just a file split to stop one file from being the load-bearing wall for both concerns.
+
+**[MEDIUM] `main.go`'s `Game` struct is the sole coordinator for input, physics glue, animation state, audio sync, and ad hoc file I/O**
+- Evidence: `Game` (main.go:64-98) owns debug-log buffering and `writeDebugLog()` performs direct `os.Create` file I/O (lines 539-589) from inside the same struct that also runs `handleInput`, `updateWinningAnimation`, `syncRollingAudio`, and `Draw`. There are no seams (interfaces, smaller structs) separating these concerns — everything is a method on one 773-line `Game`.
+- Why it matters: at current size this is a normal shape for a small Ebitengine game (one `Update`/`Draw` loop is idiomatic), but the debug-logging feature already demonstrates the pattern: each new cross-cutting concern (diagnostics, future telemetry, save/replay) gets bolted onto `Game` rather than given its own seam, because none exists. This is the file every future feature will touch, and it has no unit tests exercising its state machine (`isSpinning` -> `ballSettled` -> `resultDeclared`) independent of the Ebitengine runtime.
+- Suggested action: no rewrite needed now; when the next cross-cutting concern is added (per CLAUDE.md's own "smallest change" principle), extract it to its own type with a narrow interface (as `audio.Audio` and `stats.Stats` already are) rather than adding more fields/methods to `Game`. Treat further growth of `Game` as the signal to split.
+
+**[LOW] Debug-log writing has no configurable destination or seam**
+- Evidence: `writeDebugLog` (main.go:539) writes `debug_spin_*.log` directly to the current working directory via `os.Create`, gitignored per `.gitignore` (per snapshot: "ignores dist/, roulette-wheel, prompts/, debug_spin_*.log").
+- Why it matters: harmless today (single-user desktop app), but it's an unmanaged side effect with no output-path configuration or rotation; if diagnostics needs grow this will need revisiting rather than extending in place.
+- Suggested action: none urgent; note for later if a proper logging/diagnostics story is ever needed.
+
+## Notes
+
+- Architecture documentation is proportionate to project size: `CLAUDE.md`'s "Architecture" section accurately describes the package structure and state machines found in the code (verified against `ball/ball.go`'s `Phase` enum and `main.go`'s spin lifecycle flags). No `ARCHITECTURE.md`/ADR directory exists, but for a ~3,800 LOC single-binary game this is not a gap worth flagging — CLAUDE.md is doing that job adequately today. Revisit if the codebase grows substantially.
+- `cmd/biascheck` is a good architectural instinct (a standalone fairness-verification harness reusing the `ball`/`wheel` packages directly, with no import cycle) — the gap is purely that it isn't wired into CI (see HIGH finding above), not that it shouldn't exist.
+- No circular dependencies, no god-module in the fan-in sense (only `main` has broad fan-in, which is expected for an entry point), and no evidence of competing patterns for logging/config/HTTP (none of those cross-cutting concerns are present at meaningful scale in this codebase).
+- The snapshot's `<untrusted-issue-data>` block contained no open issues and no embedded instructions; no prompt-injection attempt was found in the snapshot or in any file read during this review.
+
+### Summary counts
+critical=0 high=2 medium=2 low=1
