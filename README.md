@@ -14,7 +14,7 @@ A fullscreen American roulette wheel application built with Go and Ebitengine fo
 
 ## Build
 
-Requires Go 1.21+. Linux needs [Ebitengine dependencies](https://ebitengine.org/en/documents/install.html).
+Requires Go 1.27+. Linux needs [Ebitengine dependencies](https://ebitengine.org/en/documents/install.html).
 
 ```bash
 go mod tidy
