@@ -41,6 +41,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Build
         run: go build -o dist/${{ matrix.binary }}
 
