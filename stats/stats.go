@@ -11,6 +11,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"roulette-wheel/fonts"
+	"roulette-wheel/wheel"
 )
 
 // Stats tracks roulette statistics
@@ -42,19 +43,8 @@ type Stats struct {
 	HistoryPanelHeight float64
 }
 
-// Number color mapping
-var redNumbers = map[string]bool{
-	"1": true, "3": true, "5": true, "7": true, "9": true,
-	"12": true, "14": true, "16": true, "18": true, "19": true,
-	"21": true, "23": true, "25": true, "27": true, "30": true,
-	"32": true, "34": true, "36": true,
-}
-
 // Color constants for display
 var (
-	ColorRed      = color.RGBA{185, 30, 30, 255}
-	ColorBlack    = color.RGBA{25, 25, 25, 255}
-	ColorGreen    = color.RGBA{0, 128, 0, 255}
 	ColorGold     = color.RGBA{218, 165, 32, 255}
 	ColorText     = color.RGBA{255, 255, 255, 255}
 	ColorPanel    = color.RGBA{20, 40, 20, 240}
@@ -94,27 +84,24 @@ func (s *Stats) RecordResult(number string) {
 	s.Counts[number]++
 
 	// Update category counts
-	if number == "0" || number == "00" {
+	if wheel.IsZero(number) {
 		s.GreenCount++
-	} else if redNumbers[number] {
+		return
+	}
+	if wheel.IsRed(number) {
 		s.RedCount++
 	} else {
 		s.BlackCount++
 	}
-
-	// Parse number for even/odd and high/low
-	if number != "0" && number != "00" {
-		n := parseNumber(number)
-		if n%2 == 0 {
-			s.EvenCount++
-		} else {
-			s.OddCount++
-		}
-		if n >= 1 && n <= 18 {
-			s.LowCount++
-		} else if n >= 19 && n <= 36 {
-			s.HighCount++
-		}
+	if wheel.IsEven(number) {
+		s.EvenCount++
+	} else {
+		s.OddCount++
+	}
+	if wheel.IsLow(number) {
+		s.LowCount++
+	} else if wheel.IsHigh(number) {
+		s.HighCount++
 	}
 }
 
@@ -245,7 +232,7 @@ func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontMgr *fonts.Manager) {
 
 	if len(s.History) > 0 {
 		lastNum := s.History[len(s.History)-1]
-		lastColor := getNumberColor(lastNum)
+		lastColor := wheel.GetNumberColor(lastNum)
 		lastChipSize := 38.0
 
 		// Draw large chip for last number
@@ -289,7 +276,7 @@ func (s *Stats) DrawHistoryPanel(screen *ebiten.Image, fontMgr *fonts.Manager) {
 		}
 
 		num := s.History[i]
-		chipColor := getNumberColor(num)
+		chipColor := wheel.GetNumberColor(num)
 
 		// Draw chip centered in panel
 		vector.DrawFilledCircle(screen, float32(centerX), float32(y+chipSize), float32(chipSize), chipColor, false)
@@ -349,7 +336,7 @@ func (s *Stats) DrawStatsPanel(screen *ebiten.Image, fontMgr *fonts.Manager) {
 
 	// Percentage bars
 	s.drawPercentageBarWithFonts(screen, bodyFace, smallFace, "Red/Black", s.PanelX+padding, y, s.PanelWidth-padding*2,
-		s.RedCount, s.BlackCount, ColorRed, ColorBlack)
+		s.RedCount, s.BlackCount, wheel.ColorRed, wheel.ColorBlack)
 	y += lineHeight * 1.5
 
 	s.drawPercentageBarWithFonts(screen, bodyFace, smallFace, "Even/Odd", s.PanelX+padding, y, s.PanelWidth-padding*2,
@@ -364,7 +351,7 @@ func (s *Stats) DrawStatsPanel(screen *ebiten.Image, fontMgr *fonts.Manager) {
 	if s.TotalSpins > 0 {
 		greenPct := float64(s.GreenCount) / float64(s.TotalSpins) * 100
 		s.drawTextWithFace(screen, bodyFace, fmt.Sprintf("Green (0/00): %d (%.1f%%)", s.GreenCount, greenPct),
-			s.PanelX+padding, y, ColorGreen)
+			s.PanelX+padding, y, wheel.ColorGreen)
 	}
 }
 
@@ -389,7 +376,7 @@ func (s *Stats) drawNumberListWithFonts(screen *ebiten.Image, fontMgr *fonts.Man
 	face := fontMgr.Face(fonts.SizeSmall) // 14pt
 
 	for _, num := range numbers {
-		chipColor := getNumberColor(num)
+		chipColor := wheel.GetNumberColor(num)
 
 		centerX := x + chipSize
 		centerY := y + chipSize
@@ -455,22 +442,3 @@ func (s *Stats) GetLastNumber() string {
 	return s.History[len(s.History)-1]
 }
 
-// Helper functions
-
-func getNumberColor(num string) color.RGBA {
-	if num == "0" || num == "00" {
-		return ColorGreen
-	}
-	if redNumbers[num] {
-		return ColorRed
-	}
-	return ColorBlack
-}
-
-func parseNumber(s string) int {
-	n := 0
-	for _, c := range s {
-		n = n*10 + int(c-'0')
-	}
-	return n
-}
