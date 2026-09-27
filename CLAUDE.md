@@ -20,7 +20,7 @@ Go application using Ebitengine for 2D graphics and audio. The game loop follows
 ### Package Structure
 
 - **main.go** - Game state machine coordinating wheel, ball, stats, and audio. Manages spin lifecycle: `isSpinning` -> `ballSettled` -> `resultDeclared`.
-- **wheel/** - Wheel rendering with 38-slot American layout. Uses `NumberSequence` for slot order and `RedNumbers` map for colors. Rotates via `Rotation` angle in radians; `Tick(friction)` advances spin physics (`SpinSpeed`, `Friction`, `BrakeFriction`) shared by the game and simulation.
+- **wheel/** - Wheel rendering with 38-slot American layout. Uses `NumberSequence` for slot order; the single home for number rules (`IsZero`/`IsRed`/`IsEven`/`IsLow`/`IsHigh`) and colors (`GetNumberColor`, `ColorRed`/`ColorBlack`/`ColorGreen`). Rotates via `Rotation` angle in radians; `Tick(friction)` advances spin physics (`SpinSpeed`, `Friction`, `BrakeFriction`) shared by the game and simulation.
 - **ball/** - Physics simulation with phase-based state machine: `PhaseIdle` -> `PhaseOrbiting` -> `PhaseDropping` -> `PhaseBouncing` -> `PhaseSettled`. Uses crypto/rand for unpredictable results. `simulate.go` provides headless `SimulateSpins` and chi-square `IsFair` checks.
 - **stats/** - Statistics tracking (history, hot/cold numbers, percentages) and right-side panel rendering.
 - **audio/** - Programmatically generated sounds (tick, bounce, settle, chime, rolling loop) using raw PCM samples at 44.1kHz stereo.

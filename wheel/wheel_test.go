@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-func isZero(num string) bool {
-	return num == "0" || num == "00"
-}
-
 func TestNumberSequence(t *testing.T) {
 	if len(NumberSequence) != NumSlots {
 		t.Fatalf("len(NumberSequence) = %d, want %d", len(NumberSequence), NumSlots)
@@ -40,7 +36,7 @@ func TestRedNumbers(t *testing.T) {
 		t.Errorf("len(RedNumbers) = %d, want 18", len(RedNumbers))
 	}
 	for num := range RedNumbers {
-		if isZero(num) {
+		if IsZero(num) {
 			t.Errorf("zero %q marked red", num)
 		}
 	}
@@ -50,7 +46,7 @@ func TestRedNumbers(t *testing.T) {
 func TestColorsAlternateAroundWheel(t *testing.T) {
 	for i, num := range NumberSequence {
 		next := NumberSequence[(i+1)%len(NumberSequence)]
-		if isZero(num) || isZero(next) {
+		if IsZero(num) || IsZero(next) {
 			continue
 		}
 		if IsRed(num) == IsRed(next) {
@@ -63,26 +59,31 @@ func TestNumberClassification(t *testing.T) {
 	tests := []struct {
 		num   string
 		color color.RGBA
+		zero  bool
 		red   bool
 		even  bool
 		low   bool
+		high  bool
 	}{
-		{"0", ColorGreen, false, false, false},
-		{"00", ColorGreen, false, false, false},
-		{"1", ColorRed, true, false, true},
-		{"2", ColorBlack, false, true, true},
-		{"10", ColorBlack, false, true, true},
-		{"18", ColorRed, true, true, true},
-		{"19", ColorRed, true, false, false},
-		{"28", ColorBlack, false, true, false},
-		{"35", ColorBlack, false, false, false},
-		{"36", ColorRed, true, true, false},
+		{"0", ColorGreen, true, false, false, false, false},
+		{"00", ColorGreen, true, false, false, false, false},
+		{"1", ColorRed, false, true, false, true, false},
+		{"2", ColorBlack, false, false, true, true, false},
+		{"10", ColorBlack, false, false, true, true, false},
+		{"18", ColorRed, false, true, true, true, false},
+		{"19", ColorRed, false, true, false, false, true},
+		{"28", ColorBlack, false, false, true, false, true},
+		{"35", ColorBlack, false, false, false, false, true},
+		{"36", ColorRed, false, true, true, false, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.num, func(t *testing.T) {
 			if got := GetNumberColor(tt.num); got != tt.color {
 				t.Errorf("GetNumberColor = %v, want %v", got, tt.color)
+			}
+			if got := IsZero(tt.num); got != tt.zero {
+				t.Errorf("IsZero = %v, want %v", got, tt.zero)
 			}
 			if got := IsRed(tt.num); got != tt.red {
 				t.Errorf("IsRed = %v, want %v", got, tt.red)
@@ -92,6 +93,9 @@ func TestNumberClassification(t *testing.T) {
 			}
 			if got := IsLow(tt.num); got != tt.low {
 				t.Errorf("IsLow = %v, want %v", got, tt.low)
+			}
+			if got := IsHigh(tt.num); got != tt.high {
+				t.Errorf("IsHigh = %v, want %v", got, tt.high)
 			}
 		})
 	}

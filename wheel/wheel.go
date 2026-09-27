@@ -354,18 +354,8 @@ func (w *Wheel) drawSlotsToCache(img *ebiten.Image, center float64) {
 		startAngle := float64(i)*SlotAngle - SlotAngle/2 // No w.Rotation
 		endAngle := startAngle + SlotAngle
 
-		// Determine slot color
-		var slotColor color.RGBA
-		if numStr == "0" || numStr == "00" {
-			slotColor = ColorGreen
-		} else if RedNumbers[numStr] {
-			slotColor = ColorRed
-		} else {
-			slotColor = ColorBlack
-		}
-
 		// Draw slot wedge
-		drawWedge(img, center, center, innerR, outerR, startAngle, endAngle, slotColor)
+		drawWedge(img, center, center, innerR, outerR, startAngle, endAngle, GetNumberColor(numStr))
 
 		// Add pocket depth shadow to create recessed appearance
 		drawSlotPocketShadow(img, center, center, innerR, outerR, startAngle, endAngle)
@@ -1338,13 +1328,18 @@ func GetDeflectorRadiusRatio() float64 {
 
 // GetNumberColor returns the color for a given number string
 func GetNumberColor(numStr string) color.RGBA {
-	if numStr == "0" || numStr == "00" {
+	if IsZero(numStr) {
 		return ColorGreen
 	}
 	if RedNumbers[numStr] {
 		return ColorRed
 	}
 	return ColorBlack
+}
+
+// IsZero returns true for the green numbers 0 and 00
+func IsZero(numStr string) bool {
+	return numStr == "0" || numStr == "00"
 }
 
 // IsRed returns true if the number is red
@@ -1354,24 +1349,29 @@ func IsRed(numStr string) bool {
 
 // IsEven returns true if the number is even (0 and 00 are neither)
 func IsEven(numStr string) bool {
-	if numStr == "0" || numStr == "00" {
-		return false
-	}
-	n := 0
-	for _, c := range numStr {
-		n = n*10 + int(c-'0')
-	}
-	return n%2 == 0
+	return !IsZero(numStr) && parseNumber(numStr)%2 == 0
 }
 
 // IsLow returns true if the number is in the low range (1-18)
 func IsLow(numStr string) bool {
-	if numStr == "0" || numStr == "00" {
+	if IsZero(numStr) {
 		return false
 	}
+	n := parseNumber(numStr)
+	return n >= 1 && n <= 18
+}
+
+// IsHigh returns true if the number is in the high range (19-36)
+func IsHigh(numStr string) bool {
+	n := parseNumber(numStr)
+	return n >= 19 && n <= 36
+}
+
+// parseNumber converts a decimal number string to an int
+func parseNumber(numStr string) int {
 	n := 0
 	for _, c := range numStr {
 		n = n*10 + int(c-'0')
 	}
-	return n >= 1 && n <= 18
+	return n
 }

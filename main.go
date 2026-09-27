@@ -397,30 +397,12 @@ func (g *Game) declareResult() {
 	if winningNumber != "" {
 		// Start the winning animation
 		g.animWinningNum = winningNumber
-		g.animWinningColor = getNumberColor(winningNumber)
+		g.animWinningColor = wheel.GetNumberColor(winningNumber)
 		g.animPhase = AnimPhaseHold
 		g.animFrameCount = 0
 		g.audio.PlayChime()
 		// Note: stats.RecordResult will be called when animation completes
 	}
-}
-
-// getNumberColor returns the color for a roulette number
-func getNumberColor(num string) color.RGBA {
-	if num == "0" || num == "00" {
-		return color.RGBA{0, 128, 0, 255} // Green
-	}
-	// Red numbers on American roulette wheel
-	redNumbers := map[string]bool{
-		"1": true, "3": true, "5": true, "7": true, "9": true,
-		"12": true, "14": true, "16": true, "18": true, "19": true,
-		"21": true, "23": true, "25": true, "27": true, "30": true,
-		"32": true, "34": true, "36": true,
-	}
-	if redNumbers[num] {
-		return color.RGBA{185, 30, 30, 255} // Red
-	}
-	return color.RGBA{25, 25, 25, 255} // Black
 }
 
 // toggleFullscreen toggles between windowed and fullscreen modes
@@ -532,7 +514,7 @@ func (g *Game) writeDebugLog(winningNumber string) {
 
 	// Determine color name
 	colorName := "unknown"
-	if winningNumber == "0" || winningNumber == "00" {
+	if wheel.IsZero(winningNumber) {
 		colorName = "green"
 	} else if wheel.IsRed(winningNumber) {
 		colorName = "red"
