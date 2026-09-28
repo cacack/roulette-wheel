@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"image/color"
 	"log"
@@ -722,12 +723,13 @@ var (
 	colorGold          = color.RGBA{218, 165, 32, 255}
 )
 
-// randomByte returns a random byte for variation (using simple PRNG for non-critical randomness)
-var prngState uint32 = 42
-
+// randomByte returns a random byte from crypto/rand, falling back to the midpoint on error
 func randomByte() byte {
-	prngState = prngState*1103515245 + 12345
-	return byte((prngState >> 16) & 0xFF)
+	var b [1]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 128
+	}
+	return b[0]
 }
 
 func main() {
