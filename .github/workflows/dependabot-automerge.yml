@@ -1,0 +1,39 @@
+name: Dependabot auto-merge
+
+# Stub. The logic lives in cacack/workflows so a fix lands in one place instead
+# of drifting per repo -- see that repo's README for what it does and why.
+#
+# Dependabot has no auto-merge setting of its own, so something has to call
+# `gh pr merge --auto`. Patch and minor bumps merge themselves once CI and the
+# required GitGuardian check pass; majors, and anything Dependabot declines to
+# classify, are left for manual review.
+#
+# `pull_request_target` rather than `pull_request`: a Dependabot-triggered
+# `pull_request` run cannot see this repo's Actions secrets, and the called
+# workflow authenticates as a GitHub App rather than with GITHUB_TOKEN. The
+# called workflow sees this event context, so it reads the PR from here.
+on: pull_request_target
+
+# Must grant at least what the called job declares, or GitHub rejects the call
+# with `startup_failure` before any step runs and with no log explaining it.
+# Read is enough: the merge and approve act as the App, not as GITHUB_TOKEN.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  automerge:
+    uses: cacack/workflows/.github/workflows/dependabot-automerge.yml@8c32eefebab14d35b588034d5bca5178d781acf6 # v2.4.0
+    with:
+      # Explicit because it is a hard constraint here rather than a preference:
+      # the branch ruleset on main allows merge commits only.
+      merge-method: merge
+    secrets:
+      # The shared Dependabot App's ID and key, stored in this repo's
+      # `dependabot` environment, which is limited to main (see cacack/workflows,
+      # "The Dependabot App"). Mapped by name rather than `secrets: inherit`,
+      # which would hand the called workflow every secret this repo holds when
+      # it declares two. GitHub requires the mapping even for secrets that
+      # exist only in the environment.
+      BOT_APP_ID: ${{ secrets.BOT_APP_ID }}
+      BOT_PRIVATE_KEY: ${{ secrets.BOT_PRIVATE_KEY }}
